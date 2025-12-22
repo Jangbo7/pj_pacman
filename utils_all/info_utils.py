@@ -10,12 +10,12 @@ import os
 
 
 
-def detect_gp_with_yolo(image, path):
+def detect_gp_with_yolo(image, model):
     """
     Use yolo to detect ghost and pacman
     
     :param image: 输入图像
-    :param path: 模型路径
+    :param model: 已初始化的YOLO模型实例
 
     :return: 包含ghost和pacman边界框及中心点的字典
              格式: {
@@ -26,7 +26,6 @@ def detect_gp_with_yolo(image, path):
              }
     """
     pr_image = cv2.resize(image, (256, 256))
-    model = YOLO(path)
     results = model.predict(source=pr_image, conf=0.5)
     
     # 初始化返回字典

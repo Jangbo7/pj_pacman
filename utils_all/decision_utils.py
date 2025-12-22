@@ -105,7 +105,9 @@ if __name__ == '__main__':
                 self.capture = False
         
         args = MockArgs()
-        _, pacman_info = detect_gp_with_yolo(env_img, model_path)
+        from ultralytics import YOLO
+        model = YOLO(model_path)
+        _, pacman_info = detect_gp_with_yolo(env_img, model)
         obstacle_info = detect_obstacles(env_img, args)
         result = pacman_decision(pacman_info, obstacle_info)    
         print(result)

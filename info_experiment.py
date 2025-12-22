@@ -25,7 +25,9 @@ def get_game_info(env_img, iter):
     
     # 调用各个检测函数获取信息
     # 注意：这里需要根据实际情况提供正确的模型路径
-    gp_info = detect_gp_with_yolo(env_img, "runs/detect/yolov8n_custom_training2/weights/best.pt")
+    from ultralytics import YOLO
+    model = YOLO("runs/detect/yolov8n_custom_training2/weights/best.pt")
+    gp_info = detect_gp_with_yolo(env_img, model)
     # g_info = detect_g_with_detector(env_img, args, None)
     pill_info = detect_pills_with_detector(env_img, args, None)
     superpill_info = detect_superpill(env_img)

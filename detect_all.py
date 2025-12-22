@@ -4,7 +4,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
+def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=None):
     """
     在一帧游戏中检测所有游戏元素,包括pacman、ghosts、pills、superpills、doors以及障碍物信息
     
@@ -21,6 +21,7 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
     :param iter: 从游戏初始化开始的帧计数/帧序号(0开始),死亡(全局死亡或者丢失一条命都算)/吃掉所有pills需要重置
 
     :param former_all_game_info: 上一帧的游戏信息字典,包含ghosts位置等历史信息
+    :param model: 已初始化的YOLO模型实例（可选），如果不提供则会使用args.path中的路径创建新模型
     可视化结果保存到detect_results/your_mission_name中包含每帧检测结果以及一个文本文件
     
     :return: 包含当前帧所有游戏元素信息的字典，格式如下：
@@ -36,22 +37,26 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
             'door_centers': [[x, y], ...],                # doors中心点(上下传送门)
             'obstacles_mask': mask,                       # 障碍物掩码(只有在第一帧会更新）
             'pacman_decision': {directions},              # 当前帧pacman可行动方向(合法action空间)
-            'ghost_num': n                                # ghosts数量
-            'score': n                                    # 当前帧得分
+            'ghost_num': n,                               # ghosts数量
+            'score': n,                                   # 当前帧得分
             'HP': n                                       # 当前帧pacman生命值
         }
     """
 
-    # !现在还缺一个检测当前帧分数的功能
-
+    # 检测当前帧的分数和生命值
     score = detect_score(env_img, "./utils_all/patch")
     HP = detect_HP(env_img)
     env_img = cv2.resize(env_img,(256,256))
     path = args.path    
+    
+    if model is None:
+        from ultralytics import YOLO
+        model = YOLO(path)
+        
     if iter == 0:
         ghost_num = 1
         obstacles_mask = detect_obstacles(env_img, args)
-        ghost_info, pacman_info = detect_gp_with_yolo(env_img, path)
+        ghost_info, pacman_info = detect_gp_with_yolo(env_img, model)
 
         # 初始化ghosts_info，包含4个ghost的信息
         ghosts_info = {
@@ -81,7 +86,7 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
         }
 
         obstacles_mask = former_all_game_info['obstacles_mask']
-        ghost_info, pacman_info = detect_gp_with_yolo(env_img, path)
+        ghost_info, pacman_info = detect_gp_with_yolo(env_img, model)
         if len(ghost_info['ghost_boxes']) != 0:
             ghost_num = detect_ghost_num(
                 ghost_info=ghost_info,
@@ -162,14 +167,31 @@ def update_ghosts(ghost_info, index, ghost_num,ghosts_info):
             ghosts_info['ghosts_centers'][index] = ghost_info['ghost_centers'][0]
         return ghosts_info
 
-def crop_image(img, left, top, right, bottom):
-    width, height = img.size
-    left = max(0, left)
-    top = max(0, top)
-    right = min(width, right)
-    bottom = min(height, bottom)
+# def crop_image(img, left, top, right, bottom):
+#     width, height = img.size
+#     left = max(0, left)
+#     top = max(0, top)
+#     right = min(width, right)
+#     bottom = min(height, bottom)
     
-    cropped_img = img.crop((left, top, right, bottom))
+#     cropped_img = img.crop((left, top, right, bottom))
+    
+#     return cropped_img
+
+def crop_image(img, left, top, right, bottom):
+    # 检查图像类型
+    if isinstance(img, Image.Image):  # 如果是PIL.Image对象
+        width, height = img.size
+        cropped_img = img.crop((left, top, right, bottom))
+    else:  # 如果是numpy数组(OpenCV图像)
+        height, width = img.shape[:2]  # OpenCV图像的shape是(height, width, channels)
+        # 确保坐标在有效范围内
+        left = max(0, left)
+        top = max(0, top)
+        right = min(width, right)
+        bottom = min(height, bottom)
+        # 裁剪图像
+        cropped_img = img[top:bottom, left:right]
     
     return cropped_img
 
