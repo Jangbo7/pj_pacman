@@ -1,7 +1,8 @@
 from utils_all.info_utils import *
 from utils_all.decision_utils import pacman_decision
 import cv2
-
+import numpy as np
+from PIL import Image
 
 def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
     """
@@ -36,12 +37,15 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
             'obstacles_mask': mask,                       # 障碍物掩码(只有在第一帧会更新）
             'pacman_decision': {directions},              # 当前帧pacman可行动方向(合法action空间)
             'ghost_num': n                                # ghosts数量
+            'score': n                                    # 当前帧得分
+            'HP': n                                       # 当前帧pacman生命值
         }
     """
 
     # !现在还缺一个检测当前帧分数的功能
 
-
+    score = detect_score(env_img, "./utils_all/patch")
+    HP = detect_HP(env_img)
     env_img = cv2.resize(env_img,(256,256))
     path = args.path    
     if iter == 0:
@@ -121,7 +125,13 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
         'pacman_decision': decision,
         
         # ghost数量
-        'ghost_num': ghost_num
+        'ghost_num': ghost_num,
+
+        # 当前帧得分
+        'score': score,
+
+        # 当前帧pacman生命值
+        'HP': HP
     }
     
     
@@ -129,9 +139,6 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info):
         save_and_visualize_detection_results(env_img, all_game_info,iter,epoch,args)
 
     return all_game_info
-
-
-
 
 def update_ghosts(ghost_info, index, ghost_num,ghosts_info):
         if ghost_num == 1:
@@ -154,3 +161,54 @@ def update_ghosts(ghost_info, index, ghost_num,ghosts_info):
             ghosts_info['ghosts_boxes'][index] = ghost_info['ghost_boxes'][0]
             ghosts_info['ghosts_centers'][index] = ghost_info['ghost_centers'][0]
         return ghosts_info
+
+def crop_image(img, left, top, right, bottom):
+    width, height = img.size
+    left = max(0, left)
+    top = max(0, top)
+    right = min(width, right)
+    bottom = min(height, bottom)
+    
+    cropped_img = img.crop((left, top, right, bottom))
+    
+    return cropped_img
+
+def process(img):
+    result = np.zeros_like(img)
+    result[np.any(img != [0, 0, 0], axis=-1)] = [255, 255, 255]
+    return result
+
+def find_label(img, digit, compare_path) -> int:
+    input_img = np.array(crop_image(img, 95-8*digit, 206, 103-8*digit, 215))
+    comp_imgs = [np.array(Image.open(f"{compare_path}/patch_{i}.png")) for i in range(10)]
+    comp_imgs.append(np.array(Image.open(f"{compare_path}/patch_.png")))
+
+    processed_input = process(input_img)
+    label = 0
+    min_mse = 10
+    for i, comp in enumerate(comp_imgs):
+        mse = np.mean((processed_input - process(comp)) ** 2)
+        if mse < min_mse:
+            label = i
+            min_mse = mse
+
+    return label % 10
+
+def detect_score(img, compare_path="./utils_all/patch") -> int:
+    score = 0
+    score += find_label(img, 3, compare_path)
+    score *= 10
+    score += find_label(img, 2, compare_path)
+    score *= 10
+    score += find_label(img, 1, compare_path)
+    score *= 10
+    score += find_label(img, 0, compare_path)
+
+    return score
+
+def detect_HP(img) -> int:
+    img1 = np.array(crop_image(img, 9, 219, 10, 220))
+    img2 = np.array(crop_image(img, 17, 219, 18, 220))
+    img3 = np.array(crop_image(img, 25, 219, 26, 220))
+    
+    return int((img1 > 0).sum() > 0) + int((img2 > 0).sum() > 0) + int((img3 > 0).sum() > 0)
