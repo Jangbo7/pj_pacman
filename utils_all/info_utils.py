@@ -142,7 +142,8 @@ def detect_pills_with_detector(env_img, args, path):
              }
     """
     pill_color = (223, 192, 111)
-    pill_detector = PillDetector(env_img, args, iter, epoch=0)
+    # 不用管此处的iter和epoch
+    pill_detector = PillDetector(env_img, args, iter_num=0, epoch=0)
     pill_positions, pill_count = pill_detector.detect_pills(pill_color, min_area=4, 
                                                             max_area=20, min_count=8)
     

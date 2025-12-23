@@ -42,11 +42,12 @@ def pacman_decision(pacman_info, obstacle_info):
             shrunk_x1, shrunk_y1, shrunk_x2, shrunk_y2 = x1, y1, x2, y2
         
         # 设置容忍度（默认为5像素）
-        tolerance = 5
-        
+        tolerance_x = 5
+        tolerance_y = 7
+
         # 检查向上移动
         # 在shrunk bbox的基础上，向上扩展tolerance像素，检查是否与障碍物重合
-        up_check_y1 = max(0, shrunk_y1 - tolerance)
+        up_check_y1 = max(0, shrunk_y1 - tolerance_y)
         up_check_y2 = shrunk_y1
         if up_check_y1 < up_check_y2:
             up_region = obstacle_info[up_check_y1:up_check_y2, shrunk_x1:shrunk_x2]
@@ -56,7 +57,7 @@ def pacman_decision(pacman_info, obstacle_info):
         # 检查向下移动
         # 在shrunk bbox的基础上，向下扩展tolerance像素，检查是否与障碍物重合
         down_check_y1 = shrunk_y2
-        down_check_y2 = min(mask_height, shrunk_y2 + tolerance)
+        down_check_y2 = min(mask_height, shrunk_y2 + tolerance_y)
         if down_check_y1 < down_check_y2:
             down_region = obstacle_info[down_check_y1:down_check_y2, shrunk_x1:shrunk_x2]
             if np.any(down_region > 0):  # 检查是否有障碍物重合
@@ -64,7 +65,7 @@ def pacman_decision(pacman_info, obstacle_info):
         
         # 检查向左移动
         # 在shrunk bbox的基础上，向左扩展tolerance像素，检查是否与障碍物重合
-        left_check_x1 = max(0, shrunk_x1 - tolerance)
+        left_check_x1 = max(0, shrunk_x1 - tolerance_y)
         left_check_x2 = shrunk_x1
         if left_check_x1 < left_check_x2:
             left_region = obstacle_info[shrunk_y1:shrunk_y2, left_check_x1:left_check_x2]
@@ -74,7 +75,7 @@ def pacman_decision(pacman_info, obstacle_info):
         # 检查向右移动
         # 在shrunk bbox的基础上，向右扩展tolerance像素，检查是否与障碍物重合
         right_check_x1 = shrunk_x2
-        right_check_x2 = min(mask_width, shrunk_x2 + tolerance)
+        right_check_x2 = min(mask_width, shrunk_x2 + tolerance_x)
         if right_check_x1 < right_check_x2:
             right_region = obstacle_info[shrunk_y1:shrunk_y2, right_check_x1:right_check_x2]
             if np.any(right_region > 0):  # 检查是否有障碍物重合

@@ -5,6 +5,7 @@ import os
 import matplotlib.pyplot as plt
 from detect_all import detect_all_in_one
 from utils_all.game_utils import create_pacman_environment
+from ultralytics import YOLO
 
 def test_detect_all_in_one():
     """
@@ -27,6 +28,10 @@ def test_detect_all_in_one():
 
     
     args = MockArgs()
+    
+    # 初始化YOLO模型
+    print(f"正在初始化YOLO模型，路径: {args.path}")
+    model = YOLO(args.path)
     
     # 用于存储前一帧的游戏信息
     former_all_game_info = None
@@ -51,13 +56,14 @@ def test_detect_all_in_one():
             print(f"警告: 第 {frame_idx} 帧图像无效，跳过处理")
             continue
         
-        # 调用detect_all_in_one函数
+        # 调用detect_all_in_one函数，并传入预初始化的YOLO模型
         all_game_info = detect_all_in_one(
             env_img, 
             args, 
             epoch, 
             frame_idx,
-            former_all_game_info
+            former_all_game_info,
+            model=model
         )
         
         # 可视化检测结果
@@ -79,7 +85,7 @@ def test_detect_all_in_one():
     
     # 关闭环境
     env.close()
-    print(f"\n测试完成！结果已保存到 '{os.path.abspath('cao')}' 文件夹中")
+    print(f"\n测试完成！结果已保存到 detection_results/{args.your_mission_name}文件夹中。")
     # epoch = epoch + 1
     
 
