@@ -1,4 +1,4 @@
-detect_all功能：
+# detect_all功能：
 用于提取每一帧的游戏信息，可在每一次游戏step前调用，用于提供信息给强化学习或vlm
 
 关于参数：
@@ -13,15 +13,41 @@ class MockArgs:
             
 args = MockArgs()
 
-关于其调用到的decision_utils以及info_utils:
+# 关于其调用到的decision_utils以及info_utils:
 封装在了utils_all里面。
 utils_all文件的功能是存储大部分主函数相关的组件，（有需要如添加新的组件时，比如添加分数识别，可添加到utils_all中）
 
-关于返回：
+# 关于返回：
 整体会得到一个大字典，如果visualize_save = True会自动保存每帧检测结果（包含图片与txt文件）到detection_results/your_mission_name中。
 
-关于示例：
+# 关于示例：
 参考：detect_all_experiment.py
 
-关于后续：
+# 关于后续：
 需要更多帧的测试，尽量visualize_save = True。
+
+## v2-2023.12.23-wym
+### *变量名替换*
+- detect_all_experiment.py的frame_idx -> main.py的frame # 也就是iter
+- detect_all_experiment.py的env_image -> main.py的image_bgr #也就是原始保存图片
+### *少量功能冲突*
+原：from utils_all.game_utils import create_pacman_environment
+    env = create_pacman_environment()
+现：- class MockArgs:
+    def __init__(self):
+        __self.game_name='ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马__
+        def main(env_name, render=True, episodes=2):
+    def main()：
+        env = gym.make(env_name, render_mode='human' if render else None)
+    main(args.game_name, episodes=2)
+### *args新增*
+- class MockArgs:
+    def __init__(self):
+        self.size = 256
+        self.visualize_save = True
+        self.path = "runs/detect/yolov8n_custom_training2/weights/best.pt"
+        self.your_mission_name = "MissionName" 
+        
+        __self.game_name='ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马__
+
+        __self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强__
