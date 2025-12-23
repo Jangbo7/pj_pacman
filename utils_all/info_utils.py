@@ -6,10 +6,6 @@ import numpy as np
 import matplotlib.pyplot as plt 
 import os
 
-
-
-
-
 def detect_gp_with_yolo(image, model):
     """
     Use yolo to detect ghost and pacman
@@ -200,11 +196,12 @@ def detect_superpill(env_img):
     # object_detector = ObjectDetector(env_img)
     # annotated_image, superpill_objects = object_detector.extract_multiple_colors_clusters(target_colors=superpill_objects,
     #                                                                                        min_area=36, max_area=40,classify_objects=True)
-    return {'superpill_boxes': [[240,40,246,50],[240,175,246,185],[10,40,16,50],[10,175,16,185]],
+    return {'superpill_boxes': [[240,40,246,50], [240,175,246,185], [10,40,16,50], [10,175,16,185]],
             'superpill_centers': [[243, 45], [243, 180], [13, 45], [13, 180]]}
 
 def detect_doors():
-    return {'door_centers':[[128,20],[128,200]] }
+    return {'door_centers':[[128,22],[128,202]]}
+
 def detect_obstacles(env_img, args):
     """
     提取图片中RGB(223, 192, 111)颜色的所有区域作为障碍物掩码，并移除pill区域
@@ -262,59 +259,59 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     :param file_name: 文件名标识，用于创建子目录
     """
     # 调整图像大小以匹配检测结果
-    resized_img = cv2.resize(env_img, (256, 256))
+    resized_img = cv2.resize(env_img, (160, 250))
     
     # 创建显示图像
     display_img = resized_img.copy()
     
-    # 绘制ghost边界框（绿色）
+    # 绘制ghost边界框（红色）
     ghost_boxes = all_game_info.get('ghosts_boxes', [])
     for bbox in ghost_boxes:
         if len(bbox) == 4:  # 确保边界框格式正确
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (0, 0, 255), 1)
     
-    # 绘制ghost中心点（绿色圆圈）
+    # 绘制ghost中心点（红色圆圈）
     ghost_centers = all_game_info.get('ghosts_centers', [])
     for center in ghost_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (cx, cy), 5, (0, 255, 0), -1)
+            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 0, 255), -1)
     
-    # 绘制pacman边界框（蓝色）
+    # 绘制pacman边界框（绿色）
     pacman_boxes = all_game_info.get('pacman_boxes', [])
     for bbox in pacman_boxes:
         if len(bbox) == 4:  # 确保边界框格式正确
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (0, 255, 0), 1)
     
-    # 绘制pacman中心点（蓝色圆圈）
+    # 绘制pacman中心点（绿色圆圈）
     pacman_centers = all_game_info.get('pacman_centers', [])
     for center in pacman_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (cx, cy), 5, (255, 0, 0), -1)
+            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 255, 0), -1)
     
     # 绘制superpill边界框（青色）
     superpill_boxes = all_game_info.get('superpill_boxes', [])
     for bbox in superpill_boxes:
         if len(bbox) == 4:  # 确保边界框格式正确
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (x1, y1), (x2, y2), (255, 255, 0), 2)
+            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (255, 255, 0), 1)
     
     # 绘制superpill中心点（青色圆圈）
     superpill_centers = all_game_info.get('superpill_centers', [])
     for center in superpill_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (cx, cy), 5, (255, 255, 0), -1)
+            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (255, 255, 0), -1)
     
     # 绘制door中心点（紫色圆圈）
     door_centers = all_game_info.get('door_centers', [])
     for center in door_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (cx, cy), 5, (255, 0, 255), -1)
+            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (255, 0, 255), -1)
     
     # 创建pill显示图像
     pill_img = resized_img.copy()
@@ -324,7 +321,7 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     for center in pill_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(pill_img, (cx, cy), 3, (0, 255, 255), -1)
+            cv2.circle(pill_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 255, 255), -1)
     
     # 显示图像
     plt.figure(figsize=(15, 5))
@@ -347,6 +344,7 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     # 显示障碍物掩码
     plt.subplot(1, 3, 3)
     obstacles_mask = all_game_info.get('obstacles_mask', np.zeros((256, 256)))
+    obstacles_mask = cv2.resize(obstacles_mask, (160, 250))
     plt.imshow(obstacles_mask, cmap='gray')
     plt.title(f'Frame {frame_idx} - Obstacles Mask')
     plt.axis('off')
