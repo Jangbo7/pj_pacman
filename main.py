@@ -30,6 +30,7 @@ class MockArgs:
         self.your_mission_name = "MissionName" 
         self.game_name='ALE/MontezumaRevenge-v5'#'ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
         self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强
+        self.mtzm_process=["先让主人公顺着出生点最近的梯子往下爬","从梯子爬下来之后，下来黑绿相间的是一片在向左滚动的传送带，需要向右去靠近绳子所在地","接着，向右跳到黄色的绳子上（技巧：向右跳而不是直接按跳跃，因为传送带会让你起跳的方向偏左）","第四步：在绳子上保持静止观察一小会","第五步：再接着再向右跳一下（注意是跳不是走）以便离开绳子到平台上","第六步：紧接着顺着那里的梯子往下爬","第七步：最后一直向左走"]
 args = MockArgs()
 
 
@@ -199,7 +200,7 @@ def main(env_name, render=True, episodes=2):
                 print("分析")
                 result = call_qwen_vl('figure/A_'+str(frame)+".png", f"你可以执行操作：0是NOOP，1是UP，2是RIGHT，3是LEFT，4是DOWN。比如observation = single_action(env, 0, 0.05) 表示保持静止观察0.05秒，\
                                     你当前已知信息（具体坐标，利于你计算跑多少时间）：{former_all_game_info}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒))的指令，指令种类和时间这两个数字组成的代码即可！\
-                                    单次输出总时间不要超过0.2秒，绝对不要有其他输出!会干扰我分析代码!")
+                                    单次输出总时间不要超过1秒，绝对不要有其他输出!会干扰我分析代码!")
                 print("Qwen-VL 代码:", result)
                 run_code(extract_num(result),env)
     else:
@@ -243,10 +244,10 @@ def main(env_name, render=True, episodes=2):
             print("分析")
             """重要的事情："""
             prompt=f"你身处游戏蒙特祖马第一关，需要找到去拿到钥匙的路线，如果与敌人距离太近，则要避开敌人,其他情况不用避开。\
-                                  图片尺寸是（71，80，3），主人公速度为每秒可移动8像素。你目前的信息有：{all_information}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，\
+                                  图片尺寸是（160，210，3），主人公速度为每秒可移动8像素。你目前的信息有：{all_information}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，\
                                   你的可执行操作是————0：保持静止观察，1：跳跃，2：顺着梯子网上爬，3：右，4：左，5：\
                                   顺着梯子往下爬，6：右上，7：左上，8：右下，9：左下，10：向上跳，11：向右跳，12：向右跳，13：向下跳， \
-                                14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳，指令种类和时间这两个数字组成的代码即可！。无需其他输出!无需其他输出!无需其他输出!"
+                                14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳，指令种类和时间这两个数字组成的代码即可！。无需其他输出，其他输出会严重影响游戏"
             print(prompt)
             result = call_qwen_vl('figure/A_'+str(frame)+".png", prompt)
             print("Qwen-VL 代码:", result)
@@ -262,19 +263,19 @@ def main(env_name, render=True, episodes=2):
 
                 marked_img, center_head, points = find_and_mark_head(image_rgb)#绿色
                 # marked_img, center_sword, points = find_and_mark_sword(marked_img)#红色
-                marked_img, center_key, points = find_and_mark_key(marked_img)#蓝色
+                # marked_img, center_key, points = find_and_mark_key(marked_img)#蓝色
                 marked_img, center_bone, points = find_and_mark_bone(marked_img)#青色
                 # marked_img, center_gate, points = find_and_mark_gate(marked_img, 5)#紫色
-                marked_img, center_rope, points = find_and_mark_rope(marked_img)#黄色
-                marked_img, ladder_info = find_and_mark_ladder(marked_img)
-                print(center_head,  center_key, center_bone,center_rope,ladder_info['top'],ladder_info['bottom'],ladder_info['center'])
+                # marked_img, center_rope, points = find_and_mark_rope(marked_img)#黄色
+                # marked_img, ladder_info = find_and_mark_ladder(marked_img)
+                print(center_head,  center_key, center_bone,center_rope)#,ladder_info['top'],ladder_info['bottom'],ladder_info['center'])
                 cv2.imwrite('figure/A_'+str(frame)+".png", cv2.cvtColor(marked_img, cv2.COLOR_RGB2BGR))
                 # cv2.imwrite(f"{frame}.png", image_bgr)
                 dx = center_head[0] - center_bone[0][0]  # 1
                 dy = center_head[1] - center_bone[0][1]  # 1
                 distance = math.sqrt(dx**2 + dy**2) 
                 pos_information=[center_head,  center_key, center_bone,center_rope,ladder_info[0]['top'],ladder_info[0]['bottom'],ladder_info[0]['center'],ladder_info[1]['top'],ladder_info[1]['bottom'],ladder_info[1]['center'],ladder_info[2]['top'],ladder_info[2]['bottom'],ladder_info[2]['center'],distance]
-                str_information = ["当前主人公位置是：","当前钥匙位置是", "当前敌人位置是：", "当前绳子位置是：", "当前梯子1顶部坐标是：", "当前梯子1底部坐标是：", "当前梯子1center位置是：","当前梯子2顶部坐标是：", "当前梯子2底部坐标是：", "当前梯子2center位置是：", "当前梯子3顶部坐标是：", "当前梯子3底部坐标是：", "当前梯子3center位置是：", "当前与敌人距离是："]
+                str_information = ["当前主人公位置是：","钥匙位置是", "当前敌人位置是：", "绳子位置是：", "梯子1顶部坐标是：", "梯子1底部坐标是：", "梯子1center位置是：","梯子2顶部坐标是：", "梯子2底部坐标是：", "梯子2center位置是：", "梯子3顶部坐标是：", "梯子3底部坐标是：", "梯子3center位置是：", "当前与敌人距离是："]
                 all_information=[]
                 for i,j in zip(str_information,pos_information):
                     if i is not None and j  is not None:
@@ -290,10 +291,10 @@ def main(env_name, render=True, episodes=2):
                 print("分析")
                 """重要的事情："""
                 prompt=f"你身处游戏蒙特祖马第一关，需要找到去拿到钥匙的路线，如果与敌人距离太近，则要避开敌人,其他情况不用避开。\
-                                    图片尺寸是（71，80，3），主人公速度为每秒可移动8像素。你目前的信息有：{all_information}请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，\
+                                    图片尺寸是（160，210，3），主人公速度为每秒可移动8像素。你目前的信息有：{all_information}请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，\
                                     你的可执行操作是————0：保持静止观察，1：跳跃，2：顺着梯子网上爬，3：右，4：左，5：\
                                     顺着梯子往下爬，6：右上，7：左上，8：右下，9：左下，10：向上跳，11：向右跳，12：向右跳，13：向下跳， \
-                                    14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳，指令种类和时间这两个数字组成的代码即可！。无需其他输出!无需其他输出!无需其他输出!"
+                                    14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳，指令种类和时间这两个数字组成的代码即可!无需其他输出!其他输出会严重影响游戏！"
                 print(prompt)
                 result = call_qwen_vl('figure/A_'+str(frame)+".png", prompt)
                 print("Qwen-VL 代码:", result)
@@ -315,3 +316,11 @@ if __name__== "__main__":
     main(args.game_name, episodes=2)
 # if __name__ == "__main__":
 #     main('ALE/Pacman-v5', episodes=2)#Ms
+
+
+"""老版本提示词"""
+# "你身处第一关，需要找到去拿到钥匙的路线，图像已经被处理，绿色(0,255,255)的框框起来的是主人公，可被你操控，深蓝色框(0,0,255)是钥匙，浅蓝色框(0, 200, 200)是敌人，要避开,图片尺寸是（71，80，3），主人公速度为每秒可移动8像素。你的本关攻略一共有7步，每一步都要一行代码，第一步：先让主人公顺着出生点的梯子往下爬，第二步：下来是一片在向左滚动的传送带，向右走（且由于传送带会反向作用，你要走的时间长一些，1.2秒左右），第三步：接着，向右跳（注意是向右跳不是普通跳）到黄色的绳子上，第四步：在绳子上保持静止观察0.5秒休息，第五步：再接着再向右跳0.5秒（注意是跳不是走）以便离开绳子到平台上，第六步：紧接着顺着那里的梯子往下爬，第七步：最后一直向左走.请输出类似obs = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，你的可执行操作是————{0：保持静止观察，1：跳跃，2：顺着梯子网上爬，3：右，4：左，5：顺着梯子往下爬，6：右上，7：左上，8：右下，9：左下，10：上且跳，11：右且跳，12：左且跳，13：下且跳， \
+# 14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳}，指令种类和时间这两个数字组成的代码即可！无需其他输出!无需其他输出!无需其他输出!"
+
+#"你身处第一关，需要找到去拿到钥匙的路线，图像已经被处理，绿色(0,255,255)的框框起来的是主人公，可被你操控，深蓝色框(0,0,255)是钥匙，浅蓝色框(0, 200, 200)是敌人，要避开,图片尺寸是（71，80，3），主人公速度为每秒可移动8像素。你的本关攻略一共有11步，每一步都要一行代码，第一步：开局先保持静止观察1.5秒，第二步：让主人公顺着出生点的梯子往下爬，下来是一片在向左滚动的传送带，第三步：向右走，且由于传送带会反向作用，你要走的时间长一些，1.2秒左右，第四步：并向右跳（注意是向右跳不是普通跳）到黄色的绳子上，最重要的第五步：保持静止观察0.5秒休息（这一步不可省略！！！！！），再接着，并列最重要的第六步：静止0.5秒这一步完成以后，向右跳0.5秒（注意是向右跳不是向右走），以便离开绳子到平台上，第七步：紧接着顺着那里的梯子往下爬，第八步：最后一直向左走5秒，第九步：顺着梯子往上爬。第十步：向左走到钥匙下面。十一步：跳。.请输出类似obs = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，你的可执行操作是————{0：保持静止观察，1：跳跃，2：顺着梯子网上爬，3：右，4：左，5：顺着梯子往下爬，6：右上，7：左上，8：右下，9：左下，10：向上跳，11：向右跳，12：向右跳，13：向下跳， \
+# 14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳}，指令种类和时间这两个数字组成的代码即可！不要忘记第五和六步，严格执行这两步（现在绳子上静止0.5秒再向右跳0.5秒），非常重要的。无需其他输出!无需其他输出!无需其他输出!"

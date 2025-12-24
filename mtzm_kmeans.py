@@ -77,8 +77,8 @@ def cluster_black_rects(valid_black_rects, threshold=20):
 def find_and_mark_ladder(img_rgb, 
                          color1_low=[0, 0, 0], color1_high=[30, 30, 30], 
                          color2=[66, 158, 130],
-                         ladder_w_min=2, ladder_w_max=15,
-                         ladder_h_min=5, ladder_h_max=15,
+                         ladder_w_min=4, ladder_w_max=10,
+                         ladder_h_min=4, ladder_h_max=10,
                          adjacent_threshold=20,
                          large_black_min_size=50):  # 大黑块的最小尺寸（过滤干扰）
     # 1. 提取黑色（含嵌套小轮廓）和绿色掩码
