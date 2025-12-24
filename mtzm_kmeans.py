@@ -47,49 +47,127 @@ def find_and_mark_sword(img_rgb, target_color=[214, 214, 214], tolerance = 1):
     
     return marked_img, center, points
 
-def find_and_mark_ladder(img_rgb, color1=[0, 0, 0], color2=[66, 158, 130]):
-    # 分别检测两种颜色的独立色块
-    mask1 = cv2.inRange(img_rgb, np.array(color1), np.array(color1))
-    mask2 = cv2.inRange(img_rgb, np.array(color2), np.array(color2))
+def is_rects_adjacent(rect1, rect2, threshold=20):
+    x1, y1, w1, h1 = rect1
+    x2, y2, w2, h2 = rect2
+    cx1, cy1 = x1 + w1//2, y1 + h1//2
+    cx2, cy2 = x2 + w2//2, y2 + h2//2
+    distance = np.sqrt((cx1 - cx2)**2 + (cy1 - cy2)**2)
+    return distance < threshold
+
+def cluster_black_rects(valid_black_rects, threshold=20):
+    clusters = []
+    if not valid_black_rects:
+        return clusters
+    clusters.append([valid_black_rects[0]])
+    for rect in valid_black_rects[1:]:
+        clustered = False
+        for cluster in clusters:
+            for c_rect in cluster:
+                if is_rects_adjacent(rect, c_rect, threshold):
+                    cluster.append(rect)
+                    clustered = True
+                    break
+            if clustered:
+                break
+        if not clustered:
+            clusters.append([rect])
+    return clusters
+
+def find_and_mark_ladder(img_rgb, 
+                         color1_low=[0, 0, 0], color1_high=[30, 30, 30], 
+                         color2=[66, 158, 130],
+                         ladder_w_min=2, ladder_w_max=15,
+                         ladder_h_min=5, ladder_h_max=15,
+                         adjacent_threshold=20,
+                         large_black_min_size=50):  # 大黑块的最小尺寸（过滤干扰）
+    # 1. 提取黑色（含嵌套小轮廓）和绿色掩码
+    mask_black = cv2.inRange(img_rgb, np.array(color1_low), np.array(color1_high))
+    mask_green = cv2.inRange(img_rgb, np.array(color2), np.array(color2))
     
-    # 合并两种颜色的掩码，用于检测整个梯子图形
-    mask_combined = cv2.bitwise_or(mask1, mask2)
+    # 2. 提取所有层级的黑色轮廓（包括大黑块内部的小轮廓）
+    # 改用RETR_TREE提取所有轮廓，获取层级关系
+    contours, hierarchy = cv2.findContours(mask_black, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    valid_black_rects = []
     
-    # 找到合并后的所有轮廓
-    contours, _ = cv2.findContours(mask_combined, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    for i, cnt in enumerate(contours):
+        x, y, w, h = cv2.boundingRect(cnt)
+        # 判断是否是“嵌套在大黑块内的小轮廓”：
+        # - 自身是小尺寸（梯子横档）
+        # - 父轮廓是大尺寸（大黑块）
+        is_small = (ladder_w_min <= w <= ladder_w_max) and (ladder_h_min <= h <= ladder_h_max)
+        has_large_parent = False
+        
+        if hierarchy[0][i][3] != -1:  # 存在父轮廓
+            parent_idx = hierarchy[0][i][3]
+            parent_cnt = contours[parent_idx]
+            px, py, pw, ph = cv2.boundingRect(parent_cnt)
+            if pw * ph >= large_black_min_size:  # 父轮廓是大黑块
+                has_large_parent = True
+        
+        # 有效条件：小尺寸 且（是独立轮廓 或 嵌套在大黑块内）
+        if is_small and (has_large_parent or hierarchy[0][i][3] == -1):
+            valid_black_rects.append((x, y, w, h))
     
-    if len(contours) == 0:
+    if not valid_black_rects:
         return img_rgb.copy(), None
     
-    # 找到最大的轮廓（假设最大的就是梯子）
-    largest_contour = max(contours, key=cv2.contourArea)
+    # 3. 聚类+后续逻辑不变
+    ladder_black_clusters = cluster_black_rects(valid_black_rects, adjacent_threshold)
+    if not ladder_black_clusters:
+        return img_rgb.copy(), None
     
-    # 获取整个梯子图形的边界框
-    x, y, w, h = cv2.boundingRect(largest_contour)
-    
-    # 计算整个梯子的中心
-    center_x = x + w // 2
-    center_y = y + h // 2
-    
-    # 计算最顶端和最底端（使用轮廓的所有点）
-    points = largest_contour.reshape(-1, 2)
-    top_point = points[np.argmin(points[:, 1])]  # y最小
-    bottom_point = points[np.argmax(points[:, 1])]  # y最大
-    
-    # 标记图像
     marked_img = img_rgb.copy()
-    cv2.rectangle(marked_img, (center_x-4, center_y-6), (center_x+4, center_y+13), (0, 255, 0), 1)
-    cv2.circle(marked_img, tuple(top_point), 3, (255, 0, 0), -1)
-    cv2.circle(marked_img, tuple(bottom_point), 3, (0, 0, 255), -1)
+    all_ladder_info = []
     
-    ladder_info = {
-        'center': (center_x, center_y),
-        'top': tuple(top_point),
-        'bottom': tuple(bottom_point),
-        'bounds': (x, y, w, h)
-    }
+    for cluster_idx, black_rects in enumerate(ladder_black_clusters):
+        # 计算黑色聚类的外接矩形
+        cluster_xs = [x for x, y, w, h in black_rects]
+        cluster_ys = [y for x, y, w, h in black_rects]
+        cluster_ws = [w for x, y, w, h in black_rects]
+        cluster_hs = [h for x, y, w, h in black_rects]
+        cluster_x = min(cluster_xs)
+        cluster_y = min(cluster_ys)
+        cluster_w = max(cluster_xs) + max(cluster_ws) - cluster_x
+        cluster_h = max(cluster_ys) + max(cluster_hs) - cluster_y
+        
+        # 提取外接矩形内的绿色区域
+        cluster_green_mask = np.zeros_like(mask_green)
+        cluster_green_mask[cluster_y:cluster_y+cluster_h, cluster_x:cluster_x+cluster_w] = \
+            mask_green[cluster_y:cluster_y+cluster_h, cluster_x:cluster_x+cluster_w]
+        
+        green_contours, _ = cv2.findContours(cluster_green_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        if not green_contours:
+            continue
+        
+        ladder_contour = max(green_contours, key=cv2.contourArea)
+        x_ladder, y_ladder, w_ladder, h_ladder = cv2.boundingRect(ladder_contour)
+        
+        # 合并点集计算顶端/底端
+        ladder_points = ladder_contour.reshape(-1, 2)
+        for (x, y, w, h) in black_rects:
+            ladder_points = np.vstack([ladder_points, [[x, y], [x+w, y+h]]])
+        
+        top_point = ladder_points[np.argmin(ladder_points[:, 1])]
+        bottom_point = ladder_points[np.argmax(ladder_points[:, 1])]
+        center_x = x_ladder + w_ladder // 2
+        center_y = y_ladder + h_ladder // 2
+        
+        # 标记
+        cv2.rectangle(marked_img, (center_x-4, center_y-6), (center_x+4, center_y+13), (0, 255, 0), 1)
+        cv2.circle(marked_img, tuple(top_point), 3, (255, 0, 0), -1)
+        cv2.circle(marked_img, tuple(bottom_point), 3, (0, 0, 255), -1)
+        
+        all_ladder_info.append({
+            'ladder_id': cluster_idx,
+            'center': (center_x, center_y),
+            'top': tuple(top_point),
+            'bottom': tuple(bottom_point),
+            'bounds': (x_ladder, y_ladder, w_ladder, h_ladder),
+            'black_rects': black_rects
+        })
     
-    return marked_img, ladder_info
+    return marked_img, all_ladder_info if all_ladder_info else None
 def find_and_mark_rope(img_rgb, rope_color=[232, 204, 99], min_length=25):
     """
     查找绳子像素点，只检测长度（厚度可能为0）

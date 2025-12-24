@@ -14,7 +14,7 @@ import random
 import math
 from ultralytics import YOLO
 #mtzm
-from mtzm_kmeans import  find_and_mark_head,find_and_mark_sword,find_and_mark_key,find_and_mark_bone,find_and_mark_gate,find_and_mark_rope,find_and_mark_ladder
+from mtzm_kmeans import  find_and_mark_head,find_and_mark_sword,find_and_mark_key,find_and_mark_bone,find_and_mark_gate,find_and_mark_rope,find_and_mark_ladder,is_rects_adjacent,cluster_black_rects
 #pacman
 from detect_all import detect_all_in_one,update_ghosts,crop_image,process,find_label,detect_score,detect_HP
 
@@ -28,7 +28,7 @@ class MockArgs:
         self.visualize_save = True
         self.path = "runs/detect/yolov8n_custom_training2/weights/best.pt"#r"Z:\Project\CS\pacman_git\pj_pacman\runs\detect\yolov8n_custom_training2\weights\best.pt"#
         self.your_mission_name = "MissionName" 
-        self.game_name='ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
+        self.game_name='ALE/MontezumaRevenge-v5'#'ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
         self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强
 args = MockArgs()
 
@@ -213,19 +213,21 @@ def main(env_name, render=True, episodes=2):
             cv2.imwrite(tmp.name, image_bgr)
             image_bgr[:43, :] = np.array([0, 0, 0])
             image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
-            marked_img, center_head, points_head = find_and_mark_head(image_rgb)#绿色
+            marked_img, ladder_info = find_and_mark_ladder(image_rgb)
+            marked_img, center_head, points_head = find_and_mark_head(marked_img)#绿色
             # marked_img, center_sword, points = find_and_mark_sword(marked_img)#红色
             marked_img, center_key, points_key = find_and_mark_key(marked_img)#蓝色
             marked_img, center_bone, points_bone = find_and_mark_bone(marked_img)#青色
             # marked_img, center_gate, points = find_and_mark_gate(marked_img, 5)#紫色
             marked_img, center_rope, points_rope = find_and_mark_rope(marked_img)#黄色
-            marked_img, ladder_info = find_and_mark_ladder(marked_img)
             print(center_bone,center_head)
             dx = center_head[0] - center_bone[0][0]  # 1
             dy = center_head[1] - center_bone[0][1]  # 1
             distance = math.sqrt(dx**2 + dy**2) 
-            pos_information=[center_head,  center_key, center_bone,center_rope,ladder_info['top'],ladder_info['bottom'],ladder_info['center'],distance]
-            str_information = ["当前主人公位置是1：","当前钥匙位置是", "当前敌人位置是：", "当前绳子位置是：", "当前梯子顶部坐标是：", "当前梯子底部坐标是：", "当前梯子center位置是：", "当前与敌人距离是："]
+            print(ladder_info)
+            print(len(ladder_info))
+            pos_information=[center_head,  center_key, center_bone,center_rope,ladder_info[0]['top'],ladder_info[0]['bottom'],ladder_info[0]['center'],ladder_info[1]['top'],ladder_info[1]['bottom'],ladder_info[1]['center'],ladder_info[2]['top'],ladder_info[2]['bottom'],ladder_info[2]['center'],distance]
+            str_information = ["当前主人公位置是：","当前钥匙位置是", "当前敌人位置是：", "当前绳子位置是：", "当前梯子1顶部坐标是：", "当前梯子1底部坐标是：", "当前梯子1center位置是：","当前梯子2顶部坐标是：", "当前梯子2底部坐标是：", "当前梯子2center位置是：", "当前梯子3顶部坐标是：", "当前梯子3底部坐标是：", "当前梯子3center位置是：", "当前与敌人距离是："]
             all_information=[]
             for i,j in zip(str_information,pos_information):
                 if i is not None and j  is not None:
@@ -271,8 +273,8 @@ def main(env_name, render=True, episodes=2):
                 dx = center_head[0] - center_bone[0][0]  # 1
                 dy = center_head[1] - center_bone[0][1]  # 1
                 distance = math.sqrt(dx**2 + dy**2) 
-                pos_information=[center_head,  center_key, center_bone,center_rope,ladder_info['top'],ladder_info['bottom'],ladder_info['center'],distance]
-                str_information = ["当前主人公位置是1：","当前钥匙位置是", "当前敌人位置是：", "当前绳子位置是：", "当前梯子顶部坐标是：", "当前梯子底部坐标是：", "当前梯子center位置是：", "当前与敌人距离是："]
+                pos_information=[center_head,  center_key, center_bone,center_rope,ladder_info[0]['top'],ladder_info[0]['bottom'],ladder_info[0]['center'],ladder_info[1]['top'],ladder_info[1]['bottom'],ladder_info[1]['center'],ladder_info[2]['top'],ladder_info[2]['bottom'],ladder_info[2]['center'],distance]
+                str_information = ["当前主人公位置是：","当前钥匙位置是", "当前敌人位置是：", "当前绳子位置是：", "当前梯子1顶部坐标是：", "当前梯子1底部坐标是：", "当前梯子1center位置是：","当前梯子2顶部坐标是：", "当前梯子2底部坐标是：", "当前梯子2center位置是：", "当前梯子3顶部坐标是：", "当前梯子3底部坐标是：", "当前梯子3center位置是：", "当前与敌人距离是："]
                 all_information=[]
                 for i,j in zip(str_information,pos_information):
                     if i is not None and j  is not None:
