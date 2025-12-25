@@ -33,7 +33,8 @@ class CVSupervisor:
             processed_env_img: Processed environment image
         """
         # Resize the image to the specified size
-        processed_env_img = cv2.resize(self.env_img, (self.args.size, self.args.size))
+        # processed_env_img = cv2.resize(self.env_img, (self.args.size, self.args.size))
+        processed_env_img = self.env_img.copy()
         
         # Save the processed image if capture is enabled
         if hasattr(self.args, 'capture') and self.args.capture:
@@ -41,7 +42,7 @@ class CVSupervisor:
         
         return processed_env_img
 
-    def analyze_env_img(self):
+    def analyze_env_img(self,color_num=10):
         """
         Analyze the image to find the top 10 main colors and generate a color chart
         
@@ -74,7 +75,7 @@ class CVSupervisor:
         counts = counts[sorted_indices]
         
         # Get top 10 main colors (or all colors if fewer than 10)
-        num_main_colors = min(28, len(unique_colors))
+        num_main_colors = min(color_num, len(unique_colors))
         main_colors = unique_colors[:num_main_colors]
         main_counts = counts[:num_main_colors]
         

@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import matplotlib.pyplot as plt 
 import os
+from .img_utils import pad_image_to_size
 
 def detect_gp_with_yolo(image, model):
     """
@@ -21,7 +22,8 @@ def detect_gp_with_yolo(image, model):
                  'pacman_centers': [[x, y], ...]
              }
     """
-    pr_image = cv2.resize(image, (256, 256))
+    # pr_image = cv2.resize(image, (256, 256))
+    pr_image, _ = pad_image_to_size(image, (256, 256)) 
     results = model.predict(source=pr_image, conf=0.5)
     
     # 初始化返回字典
@@ -70,8 +72,19 @@ def detect_gp_with_yolo(image, model):
     
     # 添加置信度最高的pacman到结果中（如果检测到了）
     if best_pacman_box is not None:
+        # 计算边界框面积
+        box_width = best_pacman_box[2] - best_pacman_box[0]
+        box_height = best_pacman_box[3] - best_pacman_box[1]
+        box_area = box_width * box_height
+        # print(f'box_area{box_area}')
+       
+        # if 60 <= box_area <= 140:
         result_dict_p['pacman_boxes'].append(best_pacman_box)
         result_dict_p['pacman_centers'].append(best_pacman_center)
+        # else:
+        #     # 面积不符合要求，置为None
+        #     result_dict_p['pacman_boxes'] = []
+        #     result_dict_p['pacman_centers'] = []
     
     return result_dict_g, result_dict_p
 
@@ -137,11 +150,12 @@ def detect_pills_with_detector(env_img, args, path):
                  'pill_num': [a]  # a为检测到的pill数量
              }
     """
-    pill_color = (223, 192, 111)
+    # pill_color = (223, 192, 111)
+    pill_color = (228,111,111)
     # 不用管此处的iter和epoch
     pill_detector = PillDetector(env_img, args, iter_num=0, epoch=0)
-    pill_positions, pill_count = pill_detector.detect_pills(pill_color, min_area=4, 
-                                                            max_area=20, min_count=8)
+    pill_positions, pill_count = pill_detector.detect_pills(target_colors=pill_color, min_area=3, 
+                                                            max_area=16, min_count=8)
     
     # 构造返回字典
     result_dict = {
@@ -151,60 +165,173 @@ def detect_pills_with_detector(env_img, args, path):
     
     return result_dict
 
-def detect_g_with_detector(env_img, args, path):
+def detect_gp_with_detector(env_img, args, path):
     """
-    使用ObjectDetector检测ghost位置
+    使用ObjectDetector检测ghost和pacman位置
     
     :param env_img: 输入图像
     :param args: 参数配置
     :param path: 未使用参数（为了保持接口一致）
     
-    :return: 包含ghost边界框及中心点的字典
-             格式: {
-                 'ghost_boxes': [[x1, y1, x2, y2], ...],
-                 'ghost_centers': [[x, y], ...]
-             }
+    :return: 两个字典：
+             1. ghost_info: 包含所有鬼信息的字典
+                格式: {
+                    'ghost_boxes': [[[x1, y1, x2, y2], ...], ...]  # ghost0-ghost4的列表，每个ghost类型包含多个检测结果的列表
+                    'ghost_centers': [[[x, y], ...], ...]  # ghost0-ghost4的列表，每个ghost类型包含多个检测结果的列表
+                }
+             2. pacman_info: 包含pacman信息的字典
+                格式: {
+                    'pacman_boxes': [[x1, y1, x2, y2], ...]  # 包含所有检测到的pacman的边界框
+                    'pacman_centers': [[x, y], ...]  # 包含所有检测到的pacman的中心点
+                }
     """
-    object_detector = ObjectDetector(env_img, args, iter, epoch=0)
-    annotated_image, ghost_objects = object_detector.extract_complex_objects_with_holes([(252, 144, 200)], 
-                                                                                        min_area=36, max_area=400)
+    target_color =[np.array([66,114,194]),np.array([84,184,153]),np.array([200,72,72]),
+            np.array([198,89,179]),np.array([180,122,48]),np.array([210,164,74])]
     
-    # 初始化返回字典
-    result_dict = {
-        'ghost_boxes': [],
-        'ghost_centers': []
-    }
+    # 创建ObjectDetector实例，使用0作为默认的iter_num参数
+    object_detector = ObjectDetector(env_img, args, iter_num=0, epoch=0)
+    annotated_image, detected_objects = object_detector.extract_complex_objects_with_holes(target_colors=target_color, 
+                                                                                        min_area=15, max_area=85)
     
-    # 处理检测到的ghost对象
-    for obj in ghost_objects:
+    # 初始化ghost信息，每个ghost类型使用列表存储多个检测结果
+    ghost_boxes = [[], [], [], [], []]
+    ghost_centers = [[], [], [], [], []]
+    
+    # 初始化pacman信息
+    pacman_boxes = []
+    pacman_centers = []
+    
+    # 处理检测到的对象
+    for obj in detected_objects:
         x, y, w, h = obj['bbox']
+        color_idx = obj['color_index']
+        
         # 计算边界框坐标 [x1, y1, x2, y2]
         x1, y1 = x, y
         x2, y2 = x + w, y + h
-        result_dict['ghost_boxes'].append([x1, y1, x2, y2])
+        box = [x1, y1, x2, y2]
         
         # 计算中心点坐标
         center_x = x + w // 2
         center_y = y + h // 2
-        result_dict['ghost_centers'].append([center_x, center_y])
+        center = [center_x, center_y]
+        
+        # 根据颜色索引分配对象类型
+        if color_idx < 5:  # 前5种颜色对应ghost0-ghost4
+            ghost_boxes[color_idx].append(box)
+            ghost_centers[color_idx].append(center)
+        elif color_idx == 5:  # 第6种颜色对应pacman
+            pacman_boxes.append(box)
+            pacman_centers.append(center)
     
-    return result_dict
+    # 构建返回的字典格式
+    ghost_info = {
+        'ghost_boxes': ghost_boxes,
+        'ghost_centers': ghost_centers
+    }
+    
+    pacman_info = {
+        'pacman_boxes': pacman_boxes,
+        'pacman_centers': pacman_centers
+    }
+    
+    return ghost_info, pacman_info
 
 
 def detect_superpill(env_img):
-    # superpill_color = (252, 144, 200)
-    # object_detector = ObjectDetector(env_img)
-    # annotated_image, superpill_objects = object_detector.extract_multiple_colors_clusters(target_colors=superpill_objects,
-    #                                                                                        min_area=36, max_area=40,classify_objects=True)
-    return {'superpill_boxes': [[240,40,246,50], [240,175,246,185], [10,40,16,50], [10,175,16,185]],
-            'superpill_centers': [[243, 45], [243, 180], [13, 45], [13, 180]]}
+    """
+    使用ObjectDetector检测超级药丸的位置
+    
+    :param env_img: 输入图像
+    
+    :return: 包含超级药丸边界框和中心点的字典
+             格式: {
+                 'superpill_boxes': [[x1, y1, x2, y2], ...],
+                 'superpill_centers': [[x, y], ...]
+             }
+    """
+    # 创建一个模拟的args对象，因为ObjectDetector需要
+    class MockArgs:
+        def __init__(self):
+            self.size = 256  # 默认图像大小
+            self.capture = False
+    
+    mock_args = MockArgs()
+    
+    # 超级药丸的颜色 (R, G, B)
+    superpill_color = np.array([228, 111, 111])
+    target_colors = [superpill_color]
+    
+    # 创建ObjectDetector实例
+    object_detector = ObjectDetector(env_img, mock_args, iter_num=0, epoch=0)
+    
+    # 提取超级药丸聚类
+    annotated_image, superpill_clusters = object_detector.extract_multiple_colors_clusters(
+        target_colors=target_colors,
+        min_area=10,  # 超级药丸的最小面积
+        max_area=30,  # 超级药丸的最大面积
+        classify_objects=False
+    )
+    
+    # 处理检测结果
+    superpill_boxes = []
+    superpill_centers = []
+    
+    # 获取图像尺寸（用于计算对称位置）
+    img_height, img_width = env_img.shape[:2]
+    
+    for cluster in superpill_clusters:
+        # 计算边界框 [x1, y1, x2, y2]
+        x, y, w, h = cluster['bbox']
+        x1, y1 = x, y
+        x2, y2 = x + w, y + h
+        box = [x1, y1, x2, y2]
+        
+        # 计算中心点
+        center_x = x + w // 2
+        center_y = y + h // 2
+        center = [center_x, center_y]
+        
+        # 添加原始检测到的超级药丸
+        superpill_boxes.append(box)
+        superpill_centers.append(center)
+        
+        # 计算y轴对称位置（保持y坐标不变）
+        symmetric_center_x = img_width - center_x
+        symmetric_center_y = center_y  # 保持y坐标不变
+        symmetric_center = [symmetric_center_x, symmetric_center_y]
+        
+        # 计算对称位置的边界框（保持y坐标不变）
+        symmetric_x = symmetric_center_x - w // 2
+        symmetric_y = y  # 使用原始y坐标
+        
+        # 确保边界框在图像范围内
+        symmetric_x = max(0, symmetric_x)
+        symmetric_y = max(0, symmetric_y)
+        symmetric_x2 = min(img_width, symmetric_x + w)
+        symmetric_y2 = min(img_height, symmetric_y + h)
+        
+        symmetric_box = [symmetric_x, symmetric_y, symmetric_x2, symmetric_y2]
+        
+        # 添加对称位置的超级药丸
+        superpill_boxes.append(symmetric_box)
+        superpill_centers.append(symmetric_center)
+    
+    # 如果没有检测到超级药丸，返回空列表
+    if not superpill_boxes:
+        return {'superpill_boxes': [], 'superpill_centers': []}
+    
+    return {
+        'superpill_boxes': superpill_boxes,
+        'superpill_centers': superpill_centers
+    }
 
 def detect_doors():
     return {'door_centers':[[128,22],[128,202]]}
 
 def detect_obstacles(env_img, args):
     """
-    提取图片中RGB(223, 192, 111)颜色的所有区域作为障碍物掩码，并移除pill区域
+    提取图片中RGB(228, 111, 111)颜色的所有区域作为障碍物掩码，并移除pill区域
     
     :param env_img: 输入图像
     :param args: 参数配置
@@ -220,12 +347,13 @@ def detect_obstacles(env_img, args):
     
     mock_args = MockArgs(getattr(args, 'size', 256))
     
-    # 提取RGB(223, 192, 111)颜色区域作为初始障碍物掩码
-    obstacle_color = (223, 192, 111)
+
+    obstacle_color = (228, 111, 111)
     
     # 调整图像大小
-    resized_img = cv2.resize(env_img, (mock_args.size, mock_args.size))
-    
+    # resized_img = cv2.resize(env_img, (mock_args.size, mock_args.size))
+    resized_img, _ = pad_image_to_size(env_img, (mock_args.size, mock_args.size))   
+
     # 创建障碍物掩码
     # 注意OpenCV使用BGR格式，所以我们需要转换颜色顺序
     bgr_color = np.array([obstacle_color[2], obstacle_color[1], obstacle_color[0]], dtype=np.uint8)
@@ -234,11 +362,30 @@ def detect_obstacles(env_img, args):
     # 使用PillDetector检测pill区域
     pill_detector = PillDetector(resized_img, mock_args, iter_num=0, epoch=0)
     pill_positions, pill_count, pill_mask = pill_detector.detect_pills(
-        obstacle_color, min_area=1, max_area=20, min_count=8, mask=True)
+        obstacle_color, min_area=3, max_area=16, min_count=8, mask=True)
     
     # 从障碍物掩码中移除pill区域
-    # 通过将pill_mask区域置零来实现
     obstacle_mask = cv2.bitwise_and(obstacle_mask, cv2.bitwise_not(pill_mask))
+    
+    # 使用ObjectDetector检测superpill区域并移除
+    detector = ObjectDetector(resized_img, mock_args, 1, 1)
+    annotated_image, all_clusters = detector.extract_multiple_colors_clusters(
+        target_colors=[[228, 111, 111]],
+        min_area=10,
+        max_area=30,
+        classify_objects=True
+    )
+    
+    # superpill的标签是3
+    superpill_mask = np.zeros_like(obstacle_mask)
+    
+    for cluster in all_clusters:
+        if cluster.get('label') == 3:  # superpill的标签是3
+            x, y, w, h = cluster['bbox']
+            cv2.rectangle(superpill_mask, (x, y), (x + w, y + h), 255, -1)
+    
+    # 从障碍物掩码中移除superpill区域
+    obstacle_mask = cv2.bitwise_and(obstacle_mask, cv2.bitwise_not(superpill_mask))
     
     return obstacle_mask
 
@@ -259,69 +406,81 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     :param file_name: 文件名标识，用于创建子目录
     """
     # 调整图像大小以匹配检测结果
-    resized_img = cv2.resize(env_img, (160, 250))
+    # resized_img = cv2.resize(env_img, (160, 250))
     
     # 创建显示图像
-    display_img = resized_img.copy()
+    # display_img = resized_img.copy()
+    display_img = env_img.copy()
     
     # 绘制ghost边界框（红色）
     ghost_boxes = all_game_info.get('ghosts_boxes', [])
-    for bbox in ghost_boxes:
-        if len(bbox) == 4:  # 确保边界框格式正确
-            x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (0, 0, 255), 1)
-    
+    for i, bbox in enumerate(ghost_boxes):
+        if i == 0:  # ghost0是一个包含4个边界框的列表
+            for sub_bbox in bbox:
+                if len(sub_bbox) == 4:  # 确保边界框格式正确
+                    x1, y1, x2, y2 = sub_bbox
+                    cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 1)
+        else:
+            if len(bbox) == 4:  # 确保边界框格式正确
+                x1, y1, x2, y2 = bbox
+                cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 1)
     # 绘制ghost中心点（红色圆圈）
     ghost_centers = all_game_info.get('ghosts_centers', [])
-    for center in ghost_centers:
-        if len(center) == 2:  # 确保中心点格式正确
-            cx, cy = center
-            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 0, 255), -1)
+    for i, center in enumerate(ghost_centers):
+        if i == 0:  # ghost0是一个包含4个中心点的列表
+            for sub_center in center:
+                if len(sub_center) == 2:  # 确保中心点格式正确
+                    cx, cy = sub_center
+                    cv2.circle(display_img, (int(cx), int(cy)), 3, (0, 0, 255), -1)
+        else:
+            if len(center) == 2:  # 确保中心点格式正确
+                cx, cy = center
+                cv2.circle(display_img, (int(cx), int(cy)), 3, (0, 0, 255), -1)
     
     # 绘制pacman边界框（绿色）
     pacman_boxes = all_game_info.get('pacman_boxes', [])
     for bbox in pacman_boxes:
         if len(bbox) == 4:  # 确保边界框格式正确
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (0, 255, 0), 1)
+            cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 0), 1)
     
     # 绘制pacman中心点（绿色圆圈）
     pacman_centers = all_game_info.get('pacman_centers', [])
     for center in pacman_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 255, 0), -1)
+            cv2.circle(display_img, (int(cx), int(cy)), 3, (0, 255, 0), -1)
     
     # 绘制superpill边界框（青色）
     superpill_boxes = all_game_info.get('superpill_boxes', [])
     for bbox in superpill_boxes:
         if len(bbox) == 4:  # 确保边界框格式正确
             x1, y1, x2, y2 = bbox
-            cv2.rectangle(display_img, (int(x1*5/8), int(y1*125/128)), (int(x2*5/8), int(y2*125/128)), (255, 255, 0), 1)
+            cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (255, 255, 0), 1)
     
     # 绘制superpill中心点（青色圆圈）
     superpill_centers = all_game_info.get('superpill_centers', [])
     for center in superpill_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (255, 255, 0), -1)
+            cv2.circle(display_img, (int(cx), int(cy)), 3, (255, 255, 0), -1)
     
     # 绘制door中心点（紫色圆圈）
     door_centers = all_game_info.get('door_centers', [])
     for center in door_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(display_img, (int(cx*5/8), int(cy*125/128)), 3, (255, 0, 255), -1)
+            cv2.circle(display_img, (int(cx), int(cy)), 3, (255, 0, 255), -1)
     
     # 创建pill显示图像
-    pill_img = resized_img.copy()
+    pill_img = display_img.copy()
     
     # 绘制pill中心点（黄色圆圈）
     pill_centers = all_game_info.get('pill_centers', [])
     for center in pill_centers:
         if len(center) == 2:  # 确保中心点格式正确
             cx, cy = center
-            cv2.circle(pill_img, (int(cx*5/8), int(cy*125/128)), 3, (0, 255, 255), -1)
+            cv2.circle(pill_img, (int(cx), int(cy)), 3, (0, 255, 255), -1)
     
     # 显示图像
     plt.figure(figsize=(15, 5))
@@ -344,7 +503,7 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     # 显示障碍物掩码
     plt.subplot(1, 3, 3)
     obstacles_mask = all_game_info.get('obstacles_mask', np.zeros((256, 256)))
-    obstacles_mask = cv2.resize(obstacles_mask, (160, 250))
+    # obstacles_mask = cv2.resize(obstacles_mask, (160, 250))
     plt.imshow(obstacles_mask, cmap='gray')
     plt.title(f'Frame {frame_idx} - Obstacles Mask')
     plt.axis('off')

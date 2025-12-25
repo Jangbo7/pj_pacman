@@ -40,13 +40,21 @@ def test_detect_all_in_one():
     print("=" * 40)
     epoch = 0
     # 测试50帧
-    for frame_idx in range(50):
+    for frame_idx in range(600):
+
+        
         # 随机选择一个动作
         action = env.action_space.sample()
         
         # 执行动作并获取结果
         observation, reward, terminated, truncated, info = env.step(action)
         
+
+        if frame_idx % 50 == 0:
+            image_2_preserve = cv2.cvtColor(observation.copy(), cv2.COLOR_BGR2RGB)
+            print(f'保存图片 {frame_idx}.png')
+            cv2.imwrite(f"cut/{frame_idx}.png", image_2_preserve)
+           
         # 使用observation作为环境图像
         env_img = cv2.cvtColor(observation, cv2.COLOR_BGR2RGB)
 
@@ -66,11 +74,7 @@ def test_detect_all_in_one():
             model=model
         )
         
-        # 可视化检测结果
-        # visualize_detection_results(env_img, all_game_info, frame_idx)
-        
-        # # 保存ghosts_info到文本文件
-        # save_ghosts_info(all_game_info, frame_idx)
+    
         
         # 更新former_all_game_info
         former_all_game_info = all_game_info

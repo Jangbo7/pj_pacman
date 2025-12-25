@@ -61,8 +61,8 @@ class ObjectDetector(CVSupervisor):
 
     def classify_game_objects(self, clusters, target_colors):
         """
-        Classify game objects by size
-        First target color as ghost class, second target color as pacman
+        Classify game objects by color
+        First n-1 target colors as ghost classes (ghost0-ghostN), last target color as pacman
         
         Args:
             clusters: List of cluster information
@@ -76,33 +76,133 @@ class ObjectDetector(CVSupervisor):
             cluster['object_class'] = 'other'
             cluster['class_index'] = 2
             
-        # For each target color, find the largest cluster with that color
-        for i, target_color in enumerate(target_colors[:2]):  # Only process first two colors
-            # Filter clusters by color (find clusters matching the target color)
-            color_matching_clusters = [
+        # Process ghost colors (all colors except the last one)
+        if target_colors and len(target_colors) > 0:
+            # Get all ghost colors (first n-1 colors)
+            ghost_colors = target_colors[:-1] if len(target_colors) > 1 else target_colors
+            
+            # For each ghost color, assign specific ghost index
+            for ghost_index, ghost_color in enumerate(ghost_colors):
+                # Find clusters that match current ghost color
+                current_ghost_clusters = [
+                    cluster for cluster in clusters 
+                    if np.array_equal(cluster['color'], ghost_color)
+                ]
+                
+                # Assign specific ghost class to matching clusters
+                for cluster in current_ghost_clusters:
+                    cluster['object_class'] = f'ghost{ghost_index}'
+                    cluster['class_index'] = ghost_index  # Use ghost index as class index
+        
+        # Process pacman color (last target color)
+        if target_colors and len(target_colors) > 1:
+            pacman_color = target_colors[-1]
+            # Filter clusters by pacman color
+            pacman_clusters = [
                 cluster for cluster in clusters 
-                if np.array_equal(cluster['color'], target_color)
+                if np.array_equal(cluster['color'], pacman_color)
             ]
             
-            # If we have matching clusters, select the largest one
-            if color_matching_clusters:
-                # Sort by area size to find the largest
-                largest_cluster = max(color_matching_clusters, key=lambda x: x['area'])
-                # Assign class based on target color index
-                if i == 0:  # First color -> ghost
-                    largest_cluster['object_class'] = 'ghost'
-                    largest_cluster['class_index'] = 0
-                elif i == 1:  # Second color -> pacman
-                    largest_cluster['object_class'] = 'pacman'
-                    largest_cluster['class_index'] = 1
+            # Select the largest pacman cluster (usually only one pacman in game)
+            if pacman_clusters:
+                largest_pacman = max(pacman_clusters, key=lambda x: x['area'])
+                largest_pacman['object_class'] = 'pacman'
+                largest_pacman['class_index'] = len(target_colors) - 1  # Pacman class index is last ghost index + 1
                 
         return clusters
 
     # def extract_multiple_colors_clusters(self, target_colors, min_area=36, max_area=400, classify_objects=False):
     
-    def extract_multiple_colors_clusters(self, target_colors, min_area=36, max_area=80, classify_objects=False):
+    # def extract_multiple_colors_clusters(self, target_colors, min_area=15, max_area=85, classify_objects=False):
+    #     """
+    #     Extract and outline clusters of multiple specified colors
+        
+    #     Args:
+    #         target_colors: Target color list, each color is (R, G, B) or grayscale value
+    #         min_area: Minimum cluster area
+    #         max_area: Maximum cluster area
+    #         classify_objects: Whether to classify game objects
+            
+    #     Returns:
+    #         annotated_image: Image with bounding boxes marked
+    #         clusters: Cluster information list
+    #     """
+    #     # Preprocess image
+    #     processed_env_img = self.preprocess_env_img()
+        
+    #     # Use original BGR image for processing
+    #     img_bgr = processed_env_img
+        
+    #     # Store all cluster information
+    #     all_clusters = []
+        
+    #     # Create masks and find clusters for each color
+    #     for color_idx, target_color in enumerate(target_colors):
+    #         # Create mask for specified color (note OpenCV uses BGR format)
+    #         if len(img_bgr.shape) == 3 and hasattr(target_color, '__len__') and len(target_color) == 3:
+    #             # Convert RGB color to BGR
+    #             bgr_color = np.array([target_color[2], target_color[1], target_color[0]], dtype=np.uint8)
+    #             mask = cv2.inRange(img_bgr, bgr_color, bgr_color)
+    #         else:
+    #             mask = cv2.inRange(img_bgr, target_color, target_color)
+            
+    #         # Find contours (i.e. clusters) with full hierarchy to handle objects with holes
+    #         contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            
+    #         # Filter contours by area
+    #         filtered_contours = []
+    #         filtered_hierarchy = []
+            
+    #         for i, cnt in enumerate(contours):
+    #             area = cv2.contourArea(cnt)
+    #             if min_area <= area <= max_area:
+    #                 filtered_contours.append(cnt)
+    #                 if hierarchy is not None:
+    #                     filtered_hierarchy.append(hierarchy[0][i])
+    #                 else:
+    #                     filtered_hierarchy.append(None)
+            
+    #         # Calculate bounding box for each contour
+    #         for i, contour in enumerate(filtered_contours):
+    #             # Calculate bounding box
+    #             x, y, w, h = cv2.boundingRect(contour)
+    #             cluster_info = {
+    #                 'bbox': (x, y, w, h),
+    #                 'contour': contour,
+    #                 'area': cv2.contourArea(contour),
+    #                 'color_index': color_idx,  # Record color index
+    #                 'color': target_color      # Record color value
+    #             }
+                
+    #             # Add hierarchy information if available
+    #             if i < len(filtered_hierarchy) and filtered_hierarchy[i] is not None:
+    #                 cluster_info['hierarchy'] = filtered_hierarchy[i]
+                    
+    #             all_clusters.append(cluster_info)
+        
+    #     # Draw bounding boxes on original preprocessed image, keeping original image background
+    #     if classify_objects:
+    #         # If object classification is needed, classify first then draw
+    #         classified_clusters = self.classify_game_objects(all_clusters, target_colors)
+    #         annotated_image = self._draw_classified_clusters_on_image(processed_env_img, classified_clusters)
+    #     else:
+    #         # Otherwise use the original drawing method
+    #         annotated_image = self._draw_multiple_clusters_on_image(processed_env_img, all_clusters)
+        
+    #     # Save results if capture is enabled
+    #     if hasattr(self.args, 'capture') and self.args.capture:
+    #         filename = f"classified_objects_{self.epoch}_iter_{self.iter}.png" if classify_objects else f"selected_multiple_colors_clusters_{self.epoch}_iter_{self.iter}.png"
+    #         cv2.imwrite(filename, annotated_image)
+        
+    #     # Return cluster information, if objects are classified return classified results
+    #     if classify_objects:
+    #         return annotated_image, classified_clusters
+    #     else:
+    #         return annotated_image, all_clusters
+
+    def extract_multiple_colors_clusters(self, target_colors, min_area=15, max_area=85, classify_objects=False):
         """
-        Extract and outline clusters of multiple specified colors
+        Extract and outline clusters of multiple specified colors, handling hollow structures correctly
         
         Args:
             target_colors: Target color list, each color is (R, G, B) or grayscale value
@@ -133,39 +233,51 @@ class ObjectDetector(CVSupervisor):
             else:
                 mask = cv2.inRange(img_bgr, target_color, target_color)
             
-            # Find contours (i.e. clusters) with full hierarchy to handle objects with holes
-            contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+            # Find contours
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
-            # Filter contours by area
-            filtered_contours = []
-            filtered_hierarchy = []
-            
-            for i, cnt in enumerate(contours):
-                area = cv2.contourArea(cnt)
-                if min_area <= area <= max_area:
-                    filtered_contours.append(cnt)
-                    if hierarchy is not None:
-                        filtered_hierarchy.append(hierarchy[0][i])
-                    else:
-                        filtered_hierarchy.append(None)
-            
-            # Calculate bounding box for each contour
-            for i, contour in enumerate(filtered_contours):
-                # Calculate bounding box
-                x, y, w, h = cv2.boundingRect(contour)
-                cluster_info = {
-                    'bbox': (x, y, w, h),
-                    'contour': contour,
-                    'area': cv2.contourArea(contour),
-                    'color_index': color_idx,  # Record color index
-                    'color': target_color      # Record color value
-                }
+            # Process contours
+            for contour in contours:
+                area = cv2.contourArea(contour)
                 
-                # Add hierarchy information if available
-                if i < len(filtered_hierarchy) and filtered_hierarchy[i] is not None:
-                    cluster_info['hierarchy'] = filtered_hierarchy[i]
+                if min_area <= area <= max_area:
+                    # Check if this contour might be hollow by comparing area to bounding rectangle area
+                    x, y, w, h = cv2.boundingRect(contour)
+                    bounding_rect_area = w * h
+                    area_ratio = area / bounding_rect_area
                     
-                all_clusters.append(cluster_info)
+                    # Calculate solidity (area of contour vs area of convex hull)
+                    hull = cv2.convexHull(contour)
+                    hull_area = cv2.contourArea(hull)
+                    solidity = float(area) / hull_area if hull_area > 0 else 0
+                    
+                    # For hollow structures, area ratio and solidity are typically lower
+                    # because of the empty space inside
+                    is_hollow = solidity < 0.85  # Adjust threshold as needed
+                    
+                    # Also check for concavity by looking at the convexity defects
+                    hull_indices = cv2.convexHull(contour, returnPoints=False)
+                    if len(contour) >= 3 and len(hull_indices) > 0:
+                        try:
+                            defects = cv2.convexityDefects(contour, hull_indices)
+                            if defects is not None and len(defects) > 5:  # Many defects suggest hollow structure
+                                is_hollow = True
+                        except:
+                            # If convexityDefects fails, continue with basic hollow detection
+                            pass
+                    
+                    cluster_info = {
+                        'bbox': (x, y, w, h),
+                        'contour': contour,
+                        'area': area,
+                        'solidity': solidity,
+                        'area_ratio': area_ratio,
+                        'color_index': color_idx,
+                        'color': target_color,
+                        'is_hollow': is_hollow
+                    }
+                    
+                    all_clusters.append(cluster_info)
         
         # Draw bounding boxes on original preprocessed image, keeping original image background
         if classify_objects:
@@ -178,7 +290,7 @@ class ObjectDetector(CVSupervisor):
         
         # Save results if capture is enabled
         if hasattr(self.args, 'capture') and self.args.capture:
-            filename = f"classified_objects_{self.epoch}_iter_{self.iter}.png" if classify_objects else f"selected_multiple_colors_clusters_{self.epoch}_iter_{self.iter}.png"
+            filename = f"classified_objects_{self.epoch}_iter_{self.args.capture}.png" if classify_objects else f"selected_multiple_colors_clusters_{self.epoch}_iter_{self.args.capture}.png"
             cv2.imwrite(filename, annotated_image)
         
         # Return cluster information, if objects are classified return classified results
@@ -186,6 +298,8 @@ class ObjectDetector(CVSupervisor):
             return annotated_image, classified_clusters
         else:
             return annotated_image, all_clusters
+
+    
 
     def _draw_multiple_clusters_on_image(self, image, clusters):
         """
@@ -254,7 +368,11 @@ class ObjectDetector(CVSupervisor):
         
         # Use different colors for bounding boxes of different categories
         colors_bgr = [
-            (0, 0, 255),    # Red - ghost
+            (0, 0, 255),    # Red - ghost0
+            (0, 255, 0),    # Green - ghost1
+            (255, 0, 255),  # Magenta - ghost2
+            (255, 255, 0),  # Yellow - ghost3
+            (0, 255, 255),  # Cyan - ghost4
             (0, 165, 255),  # Orange - pacman
             (255, 0, 0)     # Blue - other
         ]
@@ -262,9 +380,12 @@ class ObjectDetector(CVSupervisor):
         # Traverse each cluster and draw bounding boxes and category labels
         for i, cluster in enumerate(clusters):
             x, y, w, h = cluster['bbox']
-            class_index = cluster.get('class_index', 2)  # Default index is 2 (other)
+            class_index = cluster.get('class_index', 6)  # Default index is 6 (other)
+            
+            # Handle different ghost indices (ghost0-ghost4)
             if class_index >= len(colors_bgr):
-                class_index = 2  # Also use other's color when out of range
+                class_index = 6  # Use other's color when out of range
+            
             box_color = colors_bgr[class_index]
             
             # Draw rectangular bounding box
@@ -416,3 +537,127 @@ class ObjectDetector(CVSupervisor):
             #     cv2.drawContours(annotated_image, [inner_contour], -1, box_color, 1)
         
         return annotated_image
+    def extract_colors_by_pixel_matching(self, target_colors, min_area=15, max_area=85, classify_objects=False):
+        """
+        通过像素颜色匹配提取对象，找到与目标颜色完全匹配的像素，返回二值掩码
+        
+        Args:
+            target_colors: 目标颜色列表，每个颜色为(R, G, B)或灰度值
+            min_area: 最小聚类面积
+            max_area: 最大聚类面积
+            classify_objects: 是否进行对象分类
+            
+        Returns:
+            annotated_image: 带有边界框标记的图像
+            clusters: 聚类信息列表
+        """
+        # 预处理图像
+        processed_env_img = self.preprocess_env_img()
+        
+        # 使用原始BGR图像进行处理
+        img_bgr = processed_env_img
+        
+        # 存储所有聚类信息
+        all_clusters = []
+        
+        # 为每种颜色创建掩码并查找聚类
+        for color_idx, target_color in enumerate(target_colors):
+            # 创建指定颜色的掩码，只匹配完全相同的像素
+            if len(img_bgr.shape) == 3 and hasattr(target_color, '__len__') and len(target_color) == 3:
+                # 转换RGB颜色为BGR用于OpenCV处理
+                bgr_color = np.array([target_color[2], target_color[1], target_color[0]], dtype=np.uint8)
+                
+                # 创建精确颜色匹配掩码，只匹配完全相同的像素
+                mask = cv2.inRange(img_bgr, bgr_color, bgr_color)
+            else:
+                # 处理灰度值，只匹配完全相同的像素
+                target_val = int(target_color)
+                mask = cv2.inRange(img_bgr, target_val, target_val)
+            
+            # 使用轮廓检测来找到连通区域（为了兼容现有代码）
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            for contour in contours:
+                area = cv2.contourArea(contour)
+                
+                if min_area <= area <= max_area:
+                    # 计算边界框
+                    x, y, w, h = cv2.boundingRect(contour)
+                    
+                    cluster_info = {
+                        'bbox': (x, y, w, h),
+                        'contour': contour,         # 为了兼容现有代码
+                        'area': area,
+                        'color_index': color_idx,   # 记录颜色索引
+                        'color': target_color,      # 记录颜色值
+                        'mask': mask                # 二值掩码，匹配的像素为255，其他为0
+                    }
+                    
+                    all_clusters.append(cluster_info)
+        
+        # 在原始预处理图像上绘制边界框，保留原始图像背景
+        if classify_objects:
+            # 如果需要对象分类，先分类再绘制
+            classified_clusters = self.classify_game_objects(all_clusters, target_colors)
+            annotated_image = self._draw_classified_clusters_on_image(processed_env_img, classified_clusters)
+        else:
+            # 否则使用原始绘制方法
+            annotated_image = self._draw_multiple_clusters_on_image(processed_env_img, all_clusters)
+        
+        # 如果启用捕获功能，保存结果
+        if hasattr(self.args, 'capture') and self.args.capture:
+            filename = f"classified_objects_{self.epoch}_iter_{self.args.capture}.png" if classify_objects else f"selected_multiple_colors_clusters_{self.epoch}_iter_{self.args.capture}.png"
+            cv2.imwrite(filename, annotated_image)
+        
+        # 返回聚类信息，如果对象被分类则返回分类结果
+        if classify_objects:
+            return annotated_image, classified_clusters
+        else:
+            return annotated_image, all_clusters
+
+    def _simple_group_adjacent_pixels(self, pixels, max_distance=1):
+        """
+        简单地将相邻像素分组
+        
+        Args:
+            pixels: 匹配的像素坐标列表 [(x, y), ...]
+            max_distance: 判断为同一对象的最大距离，默认为1像素
+            
+        Returns:
+            grouped_pixels: 分组后的像素列表 [[(x, y), ...], ...]
+        """
+        if not pixels:
+            return []
+        
+        visited = set()
+        groups = []
+        
+        for start_pixel in pixels:
+            if start_pixel in visited:
+                continue
+                
+            # 使用广度优先搜索找到所有相邻的像素
+            current_group = []
+            queue = [start_pixel]
+            visited.add(start_pixel)
+            
+            while queue:
+                current_pixel = queue.pop(0)
+                current_group.append(current_pixel)
+                
+                # 检查周围的相邻像素
+                x, y = current_pixel
+                for dx in range(-max_distance, max_distance + 1):
+                    for dy in range(-max_distance, max_distance + 1):
+                        if dx == 0 and dy == 0:
+                            continue
+                        neighbor = (x + dx, y + dy)
+                        
+                        if neighbor in pixels and neighbor not in visited:
+                            visited.add(neighbor)
+                            queue.append(neighbor)
+            
+            if current_group:
+                groups.append(current_group)
+        
+        return groups

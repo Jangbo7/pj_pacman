@@ -1,8 +1,34 @@
 from utils_all.info_utils import *
 from utils_all.decision_utils import pacman_decision
+from utils_all.img_utils import pad_image_to_size   
 import cv2
 import numpy as np
 from PIL import Image
+import math
+
+
+def find_closest_point(target_point, point_list):
+    """
+    找到点列表中与目标点距离最近的点的索引
+    
+    :param target_point: 目标点坐标 [x, y]
+    :param point_list: 点列表 [[x1, y1], [x2, y2], ...]
+    :return: 最近点的索引，如果没有有效点则返回-1
+    """
+    if not point_list:
+        return -1
+    
+    min_distance = float('inf')
+    closest_index = -1
+    
+    for i, point in enumerate(point_list):
+        if point and len(point) == 2:  # 确保点有效
+            distance = math.hypot(point[0] - target_point[0], point[1] - target_point[1])
+            if distance < min_distance:
+                min_distance = distance
+                closest_index = i
+    
+    return closest_index
 
 def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=None):
     """
@@ -37,16 +63,21 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
             'door_centers': [[x, y], ...],                # doors中心点(上下传送门)
             'obstacles_mask': mask,                       # 障碍物掩码(只有在第一帧会更新）
             'pacman_decision': {directions},              # 当前帧pacman可行动方向(合法action空间)
+            'legal_action_num': n,                        # 当前帧pacman可行动方向数量
             'ghost_num': n,                               # ghosts数量
             'score': n,                                   # 当前帧得分
-            'HP': n                                       # 当前帧pacman生命值
+            'HP': n ,                                     # 当前帧pacman生命值
+            'state': 'init' or 'run' or 'chase',  # 当前pacman游戏状态
+'
         }
     """
 
     # 检测当前帧的分数和生命值
-    score = detect_score(env_img, "./utils_all/patch")
-    HP = detect_HP(env_img)
-    env_img = cv2.resize(env_img,(256,256))
+    # score = detect_score(env_img, "./utils_all/patch")
+    # HP = detect_HP(env_img)
+    # env_img = cv2.resize(env_img,(256,256))
+    
+    env_img, _ = pad_image_to_size(env_img, (args.size, args.size))    
     path = args.path    
     
     if model is None:
@@ -56,51 +87,139 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
     if iter == 0:
         ghost_num = 1
         obstacles_mask = detect_obstacles(env_img, args)
+        state = 'init'
+        
+        # 1. 首先初始化所有ghost的默认位置
+        center_x = args.size // 2
+        center_y = args.size // 2
+        default_center = [center_x, center_y]
+        
+        # 边界框初始化为边长7个pixel的正方形，以中心点为中心
+        half_size = 7 // 2
+        default_box = [center_x - half_size, center_y - half_size, center_x + half_size, center_y + half_size]
+        
+        # 初始化5个ghost的默认信息：ghost0为None，其他ghost使用默认值
+        ghosts_info = {
+            'ghosts_boxes': [None, default_box, default_box, default_box, default_box],
+            'ghosts_centers': [None, default_center, default_center, default_center, default_center]
+        }
+        
+        # 2. 进行检测
         ghost_info, pacman_info = detect_gp_with_yolo(env_img, model)
 
-        # 初始化ghosts_info，包含4个ghost的信息
-        ghosts_info = {
-            'ghosts_boxes': [],
-            'ghosts_centers': []
-        }
-
-        # 填充初始ghost信息（4只鬼重叠）
-        if ghost_info['ghost_boxes']:
-            # 如果检测到了ghost，复制第一项填充所有位置
-            for i in range(4):
-                ghosts_info['ghosts_boxes'].append(ghost_info['ghost_boxes'][0])
-                ghosts_info['ghosts_centers'].append(ghost_info['ghost_centers'][0])
+        # 如果YOLO没检测到pacman，则使用detector重新检测
+        if len(pacman_info['pacman_boxes']) == 0:
+            ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
+            print("YOLO didn't detect pacman, using detector to detect...")
         else:
-            # 如果没有检测到ghost，创建默认值
-            default_box = [0, 0, 0, 0]
-            default_center = [0, 0]
-            for i in range(4):
-                ghosts_info['ghosts_boxes'].append(default_box)
-                ghosts_info['ghosts_centers'].append(default_center)
+            ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
+
+        # 3. 根据检测结果更新ghost位置信息
+        detected_boxes = ghost_info['ghost_boxes']
+        detected_centers = ghost_info['ghost_centers']
+        
+        # iter==0时不会有ghost0，所以直接设置为4个空列表
+        ghosts_info['ghosts_boxes'][0] = [[], [], [], []]
+        ghosts_info['ghosts_centers'][0] = [[], [], [], []]
+        
+        # 处理其他ghost（ghost1-ghost4）的检测结果，保持原有逻辑
+        for i in range(1, min(5, len(detected_boxes))):
+            if detected_boxes[i] and len(detected_boxes[i]) > 0:
+                ghosts_info['ghosts_boxes'][i] = detected_boxes[i][0]  # 取第一个检测结果
+                ghosts_info['ghosts_centers'][i] = detected_centers[i][0]  # 取第一个检测结果
         
     else:
+        # 获取上一帧的ghosts_info和ghost_num
         ghost_num = former_all_game_info.get('ghost_num', 1)
+        
+        # 确保ghosts_boxes和ghosts_centers的长度至少为5
+        former_boxes = former_all_game_info.get('ghosts_boxes', [])
+        former_centers = former_all_game_info.get('ghosts_centers', [])
+        
+        # 扩展列表到长度5，不足的部分用None填充
+        # while len(former_boxes) < 5:
+        #     former_boxes.append(None)
+        # while len(former_centers) < 5:
+        #     former_centers.append(None)
+            
         ghosts_info = {
-            'ghosts_boxes': former_all_game_info.get('ghosts_boxes', []),
-            'ghosts_centers': former_all_game_info.get('ghosts_centers', [])
+            'ghosts_boxes': former_boxes,
+            'ghosts_centers': former_centers
         }
 
         obstacles_mask = former_all_game_info['obstacles_mask']
+        
+        # 进行检测
         ghost_info, pacman_info = detect_gp_with_yolo(env_img, model)
-        if len(ghost_info['ghost_boxes']) != 0:
-            ghost_num = detect_ghost_num(
-                ghost_info=ghost_info,
-                ghosts_info=ghosts_info['ghosts_centers'],
-                ghost_num=ghost_num,
-                args=args
-            )
-            index = iter % 4 
-            ghosts_info = update_ghosts(ghost_info, index, ghost_num, ghosts_info)
+        
+        # 如果YOLO没检测到pacman，则使用detector重新检测
+        print(pacman_info['pacman_boxes'])
+        if len(pacman_info['pacman_boxes']) == 0:
+            ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
+            print("YOLO didn't detect pacman, using detector to detect...")
+        else:
+            ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
+        
+        # 根据检测结果更新所有ghost的位置
+        if len(ghost_info['ghost_boxes']) > 0:
+            detected_boxes = ghost_info['ghost_boxes']
+            detected_centers = ghost_info['ghost_centers']
+            
+            # 处理ghost0的检测结果：转换为4元素列表格式
+            if detected_boxes[0] and len(detected_boxes[0]) > 0:
+                # 1. 复制ghost1-4的坐标到ghost0的坐标列表中
+                ghosts_info['ghosts_boxes'][0] = ghosts_info['ghosts_boxes'][1:5].copy()
+                ghosts_info['ghosts_centers'][0] = ghosts_info['ghosts_centers'][1:5].copy()
+                
+                # 创建已使用索引的集合，避免重复替换
+                used_indices = set()
+                
+                # 2. 对于每个检测到的ghost0实例，找到最近的坐标并替换
+                for detected_ghost0_box, detected_ghost0_center in zip(detected_boxes[0], detected_centers[0]):
+                    # 计算与当前检测到的ghost0距离最近的未使用坐标
+                    closest_idx = -1
+                    min_distance = float('inf')
+                    
+                    for i, center in enumerate(ghosts_info['ghosts_centers'][0]):
+                        if i not in used_indices and center and len(center) == 2:
+                            distance = math.hypot(center[0] - detected_ghost0_center[0], center[1] - detected_ghost0_center[1])
+                            if distance < min_distance:
+                                min_distance = distance
+                                closest_idx = i
+                    
+                    # 3. 用检测到的ghost0坐标替换那个最近的坐标
+                    if closest_idx != -1:
+                        ghosts_info['ghosts_boxes'][0][closest_idx] = detected_ghost0_box
+                        ghosts_info['ghosts_centers'][0][closest_idx] = detected_ghost0_center
+                        used_indices.add(closest_idx)
+                
+                # 4. 用ghost0的4个坐标依次替换ghost1-4坐标
+                for i in range(1, 5):
+                    if i <= len(ghosts_info['ghosts_boxes'][0]):
+                        ghosts_info['ghosts_boxes'][i] = ghosts_info['ghosts_boxes'][0][i-1]
+                        ghosts_info['ghosts_centers'][i] = ghosts_info['ghosts_centers'][0][i-1]
+
+
+
+                state = 'chase'
+                print(f'pacman state: {state}')
+            else:
+                # 处理其他ghost（ghost1-ghost4）的检测结果，保持原有逻辑,ghost1-4与ghost0不同时被检测
+                for i in range(1, min(5, len(detected_boxes))):
+                    if detected_boxes[i] and len(detected_boxes[i]) > 0:
+                        ghosts_info['ghosts_boxes'][i] = detected_boxes[i][0]  # 取第一个检测结果
+                        ghosts_info['ghosts_centers'][i] = detected_centers[i][0]  # 取第一个检测结果
+
+                state = 'run'
+                print(f'pacman state: {state}')
+
+            # 更新ghost_num
+            ghost_num = 4  # 固定设置为4个ghost
             
     pill_info = detect_pills_with_detector(env_img, args, path)
     superpill_info = detect_superpill(env_img)
     door_info = detect_doors()
-    decision = pacman_decision(pacman_info, obstacles_mask)
+    decision , legal_action_num = pacman_decision(pacman_info, obstacles_mask)
 
     # 合并所有信息到一个大字典中
     all_game_info = {
@@ -128,55 +247,28 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         
         # 决策信息
         'pacman_decision': decision,
+
+        'legal_action_num': legal_action_num,
         
         # ghost数量
         'ghost_num': ghost_num,
 
-        # 当前帧得分
-        'score': score,
+        # # 当前帧得分
+        # 'score': score,
 
-        # 当前帧pacman生命值
-        'HP': HP
+        # # 当前帧pacman生命值
+        # 'HP': HP
+         
+        # 状态信息
+        'state': state
     }
     
     
     if args.visualize_save:
+        # if iter > 300:
         save_and_visualize_detection_results(env_img, all_game_info,iter,epoch,args)
 
     return all_game_info
-
-def update_ghosts(ghost_info, index, ghost_num,ghosts_info):
-        if ghost_num == 1:
-            for i in range(4):
-                ghosts_info['ghosts_boxes'][i] = ghost_info['ghost_boxes'][0]
-                ghosts_info['ghosts_centers'][i] = ghost_info['ghost_centers'][0]
-        elif ghost_num == 2 or ghost_num == 3: 
-            if ghost_num-1 >= index:
-                ghosts_info['ghosts_boxes'][index] = ghost_info['ghost_boxes'][0]
-                ghosts_info['ghosts_centers'][index] = ghost_info['ghost_centers'][0]
-                if index+2 < 4: 
-                    ghosts_info['ghosts_boxes'][index+2] = ghost_info['ghost_boxes'][0]
-                    ghosts_info['ghosts_centers'][index+2] = ghost_info['ghost_centers'][0]
-            else:
-                ghosts_info['ghosts_boxes'][index] = ghost_info['ghost_boxes'][0]
-                ghosts_info['ghosts_boxes'][index-2] = ghost_info['ghost_boxes'][0]
-                ghosts_info['ghosts_centers'][index] = ghost_info['ghost_centers'][0]
-                ghosts_info['ghosts_centers'][index-2] = ghost_info['ghost_centers'][0]
-        elif ghost_num == 4: 
-            ghosts_info['ghosts_boxes'][index] = ghost_info['ghost_boxes'][0]
-            ghosts_info['ghosts_centers'][index] = ghost_info['ghost_centers'][0]
-        return ghosts_info
-
-# def crop_image(img, left, top, right, bottom):
-#     width, height = img.size
-#     left = max(0, left)
-#     top = max(0, top)
-#     right = min(width, right)
-#     bottom = min(height, bottom)
-    
-#     cropped_img = img.crop((left, top, right, bottom))
-    
-#     return cropped_img
 
 def crop_image(img, left, top, right, bottom):
     # 检查图像类型
