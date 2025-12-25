@@ -73,9 +73,8 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
     """
 
     # 检测当前帧的分数和生命值
-    # score = detect_score(env_img, "./utils_all/patch")
-    # HP = detect_HP(env_img)
-    # env_img = cv2.resize(env_img,(256,256))
+    score = detect_score(env_img, "./utils_all/mspatch")
+    HP = detect_HP(env_img)
     
     env_img, _ = pad_image_to_size(env_img, (args.size, args.size))    
     path = args.path    
@@ -253,11 +252,11 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         # ghost数量
         'ghost_num': ghost_num,
 
-        # # 当前帧得分
-        # 'score': score,
+        # 当前帧得分
+        'score': score,
 
-        # # 当前帧pacman生命值
-        # 'HP': HP
+        # 当前帧pacman生命值
+        'HP': HP,
          
         # 状态信息
         'state': state
@@ -271,45 +270,39 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
     return all_game_info
 
 def crop_image(img, left, top, right, bottom):
-    # 检查图像类型
-    if isinstance(img, Image.Image):  # 如果是PIL.Image对象
+    if isinstance(img, Image.Image):
         width, height = img.size
         cropped_img = img.crop((left, top, right, bottom))
-    else:  # 如果是numpy数组(OpenCV图像)
-        height, width = img.shape[:2]  # OpenCV图像的shape是(height, width, channels)
-        # 确保坐标在有效范围内
+    else:  
+        height, width = img.shape[:2]  
         left = max(0, left)
         top = max(0, top)
         right = min(width, right)
         bottom = min(height, bottom)
-        # 裁剪图像
         cropped_img = img[top:bottom, left:right]
     
     return cropped_img
 
-def process(img):
-    result = np.zeros_like(img)
-    result[np.any(img != [0, 0, 0], axis=-1)] = [255, 255, 255]
-    return result
-
 def find_label(img, digit, compare_path) -> int:
-    input_img = np.array(crop_image(img, 95-8*digit, 206, 103-8*digit, 215))
+    input_img = np.array(crop_image(img, 95-8*digit, 187, 102-8*digit, 194))
     comp_imgs = [np.array(Image.open(f"{compare_path}/patch_{i}.png")) for i in range(10)]
     comp_imgs.append(np.array(Image.open(f"{compare_path}/patch_.png")))
 
-    processed_input = process(input_img)
+    processed_input = input_img
     label = 0
     min_mse = 10
     for i, comp in enumerate(comp_imgs):
-        mse = np.mean((processed_input - process(comp)) ** 2)
+        mse = np.mean((processed_input - comp) ** 2)
         if mse < min_mse:
             label = i
             min_mse = mse
 
     return label % 10
 
-def detect_score(img, compare_path="./utils_all/patch") -> int:
+def detect_score(img, compare_path="./utils_all/mspatch") -> int:
     score = 0
+    score += find_label(img, 4, compare_path)
+    score *= 10
     score += find_label(img, 3, compare_path)
     score *= 10
     score += find_label(img, 2, compare_path)
@@ -321,8 +314,8 @@ def detect_score(img, compare_path="./utils_all/patch") -> int:
     return score
 
 def detect_HP(img) -> int:
-    img1 = np.array(crop_image(img, 9, 219, 10, 220))
-    img2 = np.array(crop_image(img, 17, 219, 18, 220))
-    img3 = np.array(crop_image(img, 25, 219, 26, 220))
+    img1 = np.array(crop_image(img, 14, 174, 15, 175))
+    img2 = np.array(crop_image(img, 30, 174, 31, 175))
+    img3 = np.array(crop_image(img, 46, 174, 47, 175))
     
     return int((img1 > 0).sum() > 0) + int((img2 > 0).sum() > 0) + int((img3 > 0).sum() > 0)
