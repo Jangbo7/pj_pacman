@@ -24,7 +24,7 @@ from DQNAgent import DQNAgent
 # Model_args
 # 原文是wym的key，跑的时候尽量换自己的！不然token不够用。注册网址如下
 # https://bailian.console.aliyun.com/?spm=5176.29597918.nav-v2-dropdown-menu-0.d_main_1_0_3.3ec27b08miv4qJ&tab=model&scm=20140722.M_10904477._.V_1#/model-market/all
-dashscope.api_key = "sk-14c3b2cb3b4f4181a4acfee4039d827f"
+dashscope.api_key = "sk-361f43ece66a49e299a35ef26ac687d7"
 class MockArgs:
     def __init__(self):
         self.size = 256
