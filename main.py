@@ -21,14 +21,14 @@ from detect_all import detect_all_in_one,update_ghosts,crop_image,process,find_l
 # Model_args
 # 原文是wym的key，跑的时候尽量换自己的！不然token不够用。注册网址如下
 # https://bailian.console.aliyun.com/?spm=5176.29597918.nav-v2-dropdown-menu-0.d_main_1_0_3.3ec27b08miv4qJ&tab=model&scm=20140722.M_10904477._.V_1#/model-market/all
-dashscope.api_key = "sk-5a3fe1d65d2842619565c5ff7b46a55c"#"sk-a7838ffe06eb4b68bdb8f01ffcd44246" wym #sk-5a3fe1d65d2842619565c5ff7b46a55c  蒋文博 sk-14c3b2cb3b4f4181a4acfee4039d827f 刘一多
+dashscope.api_key = "sk-361f43ece66a49e299a35ef26ac687d7"#"sk-a7838ffe06eb4b68bdb8f01ffcd44246" wym #sk-5a3fe1d65d2842619565c5ff7b46a55c  蒋文博 sk-14c3b2cb3b4f4181a4acfee4039d827f 刘一多
 class MockArgs:
     def __init__(self):
         self.size = 256
         self.visualize_save = True
         self.path = "runs/detect/yolov8n_custom_training2/weights/best.pt"#r"Z:\Project\CS\pacman_git\pj_pacman\runs\detect\yolov8n_custom_training2\weights\best.pt"#
         self.your_mission_name = "MissionName" 
-        self.game_name='ALE/MontezumaRevenge-v5'#'ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
+        self.game_name='ALE/MsPacmanNoFrameskip-v4'#'ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
         self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强
         self.mtzm_process=["先让主人公顺着出生点最近的梯子往下爬","从梯子爬下来之后，下来黑绿相间的是一片在向左滚动的传送带，需要向右去靠近绳子所在地","接着，向右跳到黄色的绳子上（技巧：向右跳而不是直接按跳跃，因为传送带会让你起跳的方向偏左）","第四步：在绳子上保持静止观察一小会","第五步：再接着再向右跳一下（注意是跳不是走）以便离开绳子到平台上","第六步：紧接着顺着那里的梯子往下爬","第七步：最后一直向左走"]
         self.mtzm_object_way=["接近梯子上缘，可以顺着梯子向下走，反之可以顺着梯子往上走","接近绳子，可以根据相对位置向右上方/左上方跳上绳子，或右下方/左下方跳下绳子",""]
@@ -223,6 +223,11 @@ def main(env_name, render=True, episodes=2):
                                   ，必要的时候也可以吃掉大力丸来击退他们,你可以执行操作：0是NOOP，1是UP，2是RIGHT，3是LEFT，4是DOWN。\
                                     比如observation = single_action(env, 0, 0.05) 表示保持静止观察0.05秒，你当前已知信息（具体坐标，利于你计算跑多少时间）：{former_all_game_info}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒))的指令，指令种类和时间这两个数字组成的代码即可！\
                                         单次输出总时间不要超过0.2秒，绝对不要有其他输出!会干扰我分析代码!")
+            
+            # 这是游戏pacman的画面，请分析并返回代码，你要吃掉离你最近的豆子，并避免碰到敌人\
+            #                       ，必要的时候也可以吃掉大力丸来击退他们,你可以执行操作：0是NOOP，1是UP，2是RIGHT，3是LEFT，4是DOWN。\
+            #                         比如observation = single_action(env, 0, 0.05) 表示保持静止观察0.05秒，你当前已知信息（具体坐标，利于你计算跑多少时间）：{former_all_game_info}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒))的指令，指令种类和时间这两个数字组成的代码即可！\
+            #                             单次输出总时间不要超过0.2秒，绝对不要有其他输出!会干扰我分析代码!
             print("Qwen-VL 代码:", result)
             _, reward, terminated, truncated, info =run_code(extract_num(result),env)
         while True:
@@ -463,3 +468,13 @@ if __name__== "__main__":
 
 #"你身处第一关，需要找到去拿到钥匙的路线，图像已经被处理，绿色(0,255,255)的框框起来的是主人公，可被你操控，深蓝色框(0,0,255)是钥匙，浅蓝色框(0, 200, 200)是敌人，要避开,图片尺寸是（71，80，3），主人公速度为每秒可移动8像素。你的本关攻略一共有11步，每一步都要一行代码，第一步：开局先保持静止观察1.5秒，第二步：让主人公顺着出生点的梯子往下爬，下来是一片在向左滚动的传送带，第三步：向右走，且由于传送带会反向作用，你要走的时间长一些，1.2秒左右，第四步：并向右跳（注意是向右跳不是普通跳）到黄色的绳子上，最重要的第五步：保持静止观察0.5秒休息（这一步不可省略！！！！！），再接着，并列最重要的第六步：静止0.5秒这一步完成以后，向右跳0.5秒（注意是向右跳不是向右走），以便离开绳子到平台上，第七步：紧接着顺着那里的梯子往下爬，第八步：最后一直向左走5秒，第九步：顺着梯子往上爬。第十步：向左走到钥匙下面。十一步：跳。.请输出类似obs = single_action(env, Int(指令种类), float(持续时间，单位是秒，所以基本都是1秒))的指令，你的可执行操作是————{0：保持静止观察，1：跳跃，2：顺着梯子网上爬，3：右，4：左，5：顺着梯子往下爬，6：右上，7：左上，8：右下，9：左下，10：向上跳，11：向右跳，12：向右跳，13：向下跳， \
 # 14：右上且跳，15：左上且跳，16：右下且跳，17：左下且跳}，指令种类和时间这两个数字组成的代码即可！不要忘记第五和六步，严格执行这两步（现在绳子上静止0.5秒再向右跳0.5秒），非常重要的。无需其他输出!无需其他输出!无需其他输出!"
+
+
+#王珺pacman提示词：这是游戏pacman的画面，请分析并返回代码，
+# 你应该按照你的分析和我我下面的步骤进行操作：
+# 注意，鬼的速度与你相当，因此当存在鬼离你较近（曼哈顿距离在3之内）的时候，你应该先放弃吃豆子，而是去朝一个所有鬼都离你较远的地方走\
+#  当你和大力丸的曼哈顿距离小于你和鬼的曼哈顿距离时，你应该吃掉大力丸来击退他们,当你吃到大力丸后，你应该追踪曼哈顿距离为5以内的任何鬼，并吃掉他们以获取更高分数\
+#正常状态下，你应该吃离你最近的豆子，如果存在周围都存在豆子的情况，你应该吃掉离鬼最远的豆子
+# 你可以执行操作：0是NOOP，1是UP，2是RIGHT，3是LEFT，4是DOWN。\
+#     比如observation = single_action(env, 0, 0.05) 表示保持静止观察0.05秒，你当前已知信息（具体坐标，利于你计算跑多少时间）：{former_all_game_info}。请输出类似observation = single_action(env, Int(指令种类), float(持续时间，单位是秒))的指令，指令种类和时间这两个数字组成的代码即可！\
+#         单次输出总时间不要超过0.2秒，绝对不要有其他输出!会干扰我分析代码!
