@@ -18,6 +18,9 @@ from mtzm_kmeans import  find_and_mark_head,find_and_mark_sword,find_and_mark_ke
 #pacman
 from detect_all import detect_all_in_one,update_ghosts,crop_image,process,find_label,detect_score,detect_HP
 
+# DQN Agent
+from DQNAgent import DQNAgent
+
 # Model_args
 # 原文是wym的key，跑的时候尽量换自己的！不然token不够用。注册网址如下
 # https://bailian.console.aliyun.com/?spm=5176.29597918.nav-v2-dropdown-menu-0.d_main_1_0_3.3ec27b08miv4qJ&tab=model&scm=20140722.M_10904477._.V_1#/model-market/all
@@ -27,7 +30,7 @@ class MockArgs:
         self.size = 256
         self.visualize_save = True
         self.path = "runs/detect/yolov8n_custom_training2/weights/best.pt"#r"Z:\Project\CS\pacman_git\pj_pacman\runs\detect\yolov8n_custom_training2\weights\best.pt"#
-        self.your_mission_name = "MissionName" 
+        self.your_mission_name = "lyd" 
         self.game_name='ALE/MontezumaRevenge-v5'#'ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马
         self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强
         self.mtzm_process=["先让主人公顺着出生点最近的梯子往下爬","从梯子爬下来之后，下来黑绿相间的是一片在向左滚动的传送带，需要向右去靠近绳子所在地","接着，向右跳到黄色的绳子上（技巧：向右跳而不是直接按跳跃，因为传送带会让你起跳的方向偏左）","第四步：在绳子上保持静止观察一小会","第五步：再接着再向右跳一下（注意是跳不是走）以便离开绳子到平台上","第六步：紧接着顺着那里的梯子往下爬","第七步：最后一直向左走"]
@@ -176,9 +179,9 @@ def find_nearest_active_item(head_pos, mtzm_dict, pos_list):
 def main(env_name, render=True, episodes=2):
     if env_name == "ALE/Pacman-v5" or env_name == "ALE/MsPacman-v5":
         # 0静止1上2右3左4下
-        env = gym.make(env_name, render_mode='human' if render else None)
+        env = gym.make(env_name, render_mode='rgb_array' if render else None)
         observation, info = env.reset()
-        observation,_,terminated,truncated,_ = single_action(env, 0, 0.01) 
+        observation,_,terminated,truncated,_ = single_action(env, 0, 1)     # 从0.01秒改成1帧，对吗？
         image_bgr = cv2.cvtColor(observation, cv2.COLOR_RGB2BGR)
         frame=0
         former_all_game_info = None
@@ -214,7 +217,15 @@ def main(env_name, render=True, episodes=2):
                 observation, info = env.reset()
 
             print(f"\n测试完成！结果已保存到 detection_results/{args.your_mission_name}文件夹中。")
-            # epoch = epoch + 1
+
+            # initialize dqn agent
+            state = encode_state(all_game_info)
+            dqnAgent = DQNAgent(state_size=len(state), action_size=5)
+
+            # in training loop
+            done = False
+
+            # # epoch = epoch + 1
 
             marked_img=image_rgb
             cv2.imwrite('figure/A_'+str(frame)+".png", cv2.cvtColor(marked_img, cv2.COLOR_RGB2BGR))
@@ -227,34 +238,43 @@ def main(env_name, render=True, episodes=2):
             _, reward, terminated, truncated, info =run_code(extract_num(result),env)
         while True:
             frame+=1
+
+            state = encode_state(all_game_info)             # 第i帧（第一次进循环应该是第0帧）的信息
+
+            legal_actions_mask = get_legal_actions_mask(all_game_info)
+            action = dqnAgent.choose_action(state, legal_actions_mask)
+            observation, reward, terminated, truncated, info = single_action(env, action, 4)
+
+            done = terminated or truncated
+
             # 使用临时文件保存图像（避免污染项目目录）
             with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp:
                 image_bgr = cv2.cvtColor(observation, cv2.COLOR_RGB2BGR)
+                image_bgr[:43, :] = np.array([0, 0, 0])
+                image_rgb = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB)
                 if image_bgr is None or image_bgr.size == 0:
                     print(f"警告: 第 {frame} 帧图像无效，跳过处理")
                     pass
-                all_game_info = detect_all_in_one(
+                next_all_game_info = detect_all_in_one(
                 image_bgr, 
                 args, 
                 epoch, 
                 frame,
-                former_all_game_info,
+                former_all_game_info,                      # former_all_game_info 是第i帧的信息（第一次进循环这里应该是第0帧）
                 model=model
-            )
+            )                                              # next_all_game_info 第i+1帧的信息（第一次进循环这里应该是第1帧）
                 # #可视化检测结果
                 #visualize_detection_results(image_bgr, all_game_info, frame)
                 # # 保存ghosts_info到文本文件
                 #save_ghosts_info(all_game_info, frame)
-                # 更新former_all_game_info
-                former_all_game_info = all_game_info
                 
                 # 显示进度
                 print(f"已处理帧 {frame + 1}/∞")
                 
                 # 检查游戏是否结束
-                if terminated or truncated:
+                if done:
                     print("游戏结束，重新开始...")
-                    observation, info = env.reset()
+                    break
 
                 print(f"\n测试完成！结果已保存到 detection_results/{args.your_mission_name}文件夹中。")
                 cv2.imwrite('figure/'+str(frame)+".png", cv2.cvtColor(image_bgr, cv2.COLOR_RGB2BGR))
@@ -435,6 +455,14 @@ def main(env_name, render=True, episodes=2):
                 # os.unlink(tmp.name)  # 删除临时文件
 
     env.close()
+# def single_action(env, action_num, duration):
+#     start_time = time.time()
+    
+#     while time.time() - start_time < duration:
+#         observation, reward, terminated, truncated, info = env.step(action_num)
+    
+#     return observation, reward, terminated, truncated, info
+
 def single_action(env, action_num, duration):
     start_time = time.time()
     
@@ -451,10 +479,10 @@ def single_action(env, action_num, duration):
 #     # cv2.imwrite('MsPacman/cut.png', cv2.cvtColor(obs, cv2.COLOR_RGB2BGR))
 #     return obs
 
-if __name__== "__main__":
-    main(args.game_name, episodes=2)
-# if __name__ == "__main__":
-#     main('ALE/Pacman-v5', episodes=2)#Ms
+# if __name__== "__main__":
+#     main(args.game_name, episodes=2)
+if __name__ == "__main__":
+    main('ALE/Pacman-v5', episodes=2)#Ms
 
 
 """老版本提示词"""
