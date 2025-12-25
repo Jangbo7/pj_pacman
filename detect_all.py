@@ -73,8 +73,8 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
     """
 
     # 检测当前帧的分数和生命值
-    score = detect_score(env_img, "./utils_all/mspatch")
-    HP = detect_HP(env_img)
+    score = detect_score(cv2.cvtColor(env_img, cv2.COLOR_RGB2BGR), "./utils_all/mspatch")
+    HP = detect_HP(cv2.cvtColor(env_img, cv2.COLOR_RGB2BGR))
     
     env_img, _ = pad_image_to_size(env_img, (args.size, args.size))    
     path = args.path    
