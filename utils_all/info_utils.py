@@ -238,11 +238,12 @@ def detect_gp_with_detector(env_img, args, path):
     return ghost_info, pacman_info
 
 
-def detect_superpill(env_img):
+def detect_superpill(env_img, iter=0):
     """
     使用ObjectDetector检测超级药丸的位置
     
     :param env_img: 输入图像
+    :param iter: 迭代次数，用于决定检测策略
     
     :return: 包含超级药丸边界框和中心点的字典
              格式: {
@@ -250,81 +251,114 @@ def detect_superpill(env_img):
                  'superpill_centers': [[x, y], ...]
              }
     """
-    # 创建一个模拟的args对象，因为ObjectDetector需要
     class MockArgs:
         def __init__(self):
-            self.size = 256  # 默认图像大小
+            self.size = 256
             self.capture = False
     
     mock_args = MockArgs()
     
-    # 超级药丸的颜色 (R, G, B)
     superpill_color = np.array([228, 111, 111])
     target_colors = [superpill_color]
     
-    # 创建ObjectDetector实例
-    object_detector = ObjectDetector(env_img, mock_args, iter_num=0, epoch=0)
+    img_height, img_width = env_img.shape[:2]
     
-    # 提取超级药丸聚类
+    object_detector = ObjectDetector(env_img, mock_args, iter_num=iter, epoch=0)
     annotated_image, superpill_clusters = object_detector.extract_multiple_colors_clusters(
         target_colors=target_colors,
-        min_area=10,  # 超级药丸的最小面积
-        max_area=30,  # 超级药丸的最大面积
+        min_area=10,
+        max_area=30,
         classify_objects=False
     )
     
-    # 处理检测结果
-    superpill_boxes = []
-    superpill_centers = []
-    
-    # 获取图像尺寸（用于计算对称位置）
-    img_height, img_width = env_img.shape[:2]
+    detected_boxes = []
+    detected_centers = []
     
     for cluster in superpill_clusters:
-        # 计算边界框 [x1, y1, x2, y2]
         x, y, w, h = cluster['bbox']
         x1, y1 = x, y
         x2, y2 = x + w, y + h
         box = [x1, y1, x2, y2]
-        
-        # 计算中心点
         center_x = x + w // 2
         center_y = y + h // 2
         center = [center_x, center_y]
-        
-        # 添加原始检测到的超级药丸
-        superpill_boxes.append(box)
-        superpill_centers.append(center)
-        
-        # 计算y轴对称位置（保持y坐标不变）
-        symmetric_center_x = img_width - center_x
-        symmetric_center_y = center_y  # 保持y坐标不变
-        symmetric_center = [symmetric_center_x, symmetric_center_y]
-        
-        # 计算对称位置的边界框（保持y坐标不变）
-        symmetric_x = symmetric_center_x - w // 2
-        symmetric_y = y  # 使用原始y坐标
-        
-        # 确保边界框在图像范围内
-        symmetric_x = max(0, symmetric_x)
-        symmetric_y = max(0, symmetric_y)
-        symmetric_x2 = min(img_width, symmetric_x + w)
-        symmetric_y2 = min(img_height, symmetric_y + h)
-        
-        symmetric_box = [symmetric_x, symmetric_y, symmetric_x2, symmetric_y2]
-        
-        # 添加对称位置的超级药丸
-        superpill_boxes.append(symmetric_box)
-        superpill_centers.append(symmetric_center)
+        detected_boxes.append(box)
+        detected_centers.append(center)
     
-    # 如果没有检测到超级药丸，返回空列表
-    if not superpill_boxes:
-        return {'superpill_boxes': [], 'superpill_centers': []}
-    
-    return {
-        'superpill_boxes': superpill_boxes,
-        'superpill_centers': superpill_centers
-    }
+    if iter == 0:
+        if len(detected_boxes) < 2:
+            return {'superpill_boxes': [], 'superpill_centers': []}
+        
+        left_indices = sorted(range(len(detected_centers)), 
+                             key=lambda i: detected_centers[i][0])[:2]
+        right_indices = sorted(range(len(detected_centers)), 
+                              key=lambda i: detected_centers[i][0])[-2:]
+        
+        left_centers = [detected_centers[i] for i in left_indices]
+        right_centers = [detected_centers[i] for i in right_indices]
+        left_boxes = [detected_boxes[i] for i in left_indices]
+        right_boxes = [detected_boxes[i] for i in right_indices]
+        
+        left_centers_sorted = sorted(left_centers, key=lambda c: c[1])
+        right_centers_sorted = sorted(right_centers, key=lambda c: c[1])
+        left_boxes_sorted = [left_boxes[left_centers.index(c)] for c in left_centers_sorted]
+        right_boxes_sorted = [right_boxes[right_centers.index(c)] for c in right_centers_sorted]
+        
+        initial_superpill_data = {
+            'boxes': [left_boxes_sorted[0], right_boxes_sorted[0], 
+                      left_boxes_sorted[1], right_boxes_sorted[1]],
+            'centers': [left_centers_sorted[0], right_centers_sorted[0],
+                        left_centers_sorted[1], right_centers_sorted[1]],
+            'left_indices': [0, 2],
+            'right_indices': [1, 3],
+            'left_detected': True,
+            'right_detected': True
+        }
+        
+        detect_superpill.initial_superpill_data = initial_superpill_data
+        
+        return {
+            'superpill_boxes': initial_superpill_data['boxes'][:],
+            'superpill_centers': initial_superpill_data['centers'][:]
+        }
+    else:
+        initial_superpill_data = getattr(detect_superpill, 'initial_superpill_data', None)
+        if initial_superpill_data is None:
+            return {'superpill_boxes': [], 'superpill_centers': []}
+        
+        initial_boxes = initial_superpill_data['boxes']
+        initial_centers = initial_superpill_data['centers']
+        left_detected = initial_superpill_data.get('left_detected', True)
+        right_detected = initial_superpill_data.get('right_detected', True)
+        
+        has_left = any(c[0] < img_width // 2 for c in detected_centers)
+        has_right = any(c[0] >= img_width // 2 for c in detected_centers)
+        
+        if (iter // 2) % 2 == 0:
+            if not has_left:
+                left_detected = False
+        else:
+            if not has_right:
+                right_detected = False
+        
+        initial_superpill_data['left_detected'] = left_detected
+        initial_superpill_data['right_detected'] = right_detected
+        
+        filtered_boxes = []
+        filtered_centers = []
+        
+        for i, center in enumerate(initial_centers):
+            if i in [0, 2] and left_detected:
+                filtered_boxes.append(initial_boxes[i])
+                filtered_centers.append(center)
+            elif i in [1, 3] and right_detected:
+                filtered_boxes.append(initial_boxes[i])
+                filtered_centers.append(center)
+        print(len(filtered_boxes))
+        return {
+            'superpill_boxes': filtered_boxes,
+            'superpill_centers': filtered_centers
+        }
 
 def detect_doors():
     return {'door_centers':[[128,22],[128,202]]}
@@ -369,19 +403,25 @@ def detect_obstacles(env_img, args):
     
     # 使用ObjectDetector检测superpill区域并移除
     detector = ObjectDetector(resized_img, mock_args, 1, 1)
+    target_color =[np.array([228, 111, 111]) ]
     annotated_image, all_clusters = detector.extract_multiple_colors_clusters(
-        target_colors=[[228, 111, 111]],
+        target_colors = target_color,
         min_area=10,
         max_area=30,
-        classify_objects=True
+        classify_objects=False
     )
     
-    # superpill的标签是3
+    # 从检测到的聚类中创建superpill掩码
     superpill_mask = np.zeros_like(obstacle_mask)
     
+    # 根据superpill的面积特征来识别它们，而不是使用label
     for cluster in all_clusters:
-        if cluster.get('label') == 3:  # superpill的标签是3
-            x, y, w, h = cluster['bbox']
+        x, y, w, h = cluster['bbox']
+        area = w * h
+        
+        # 根据superpill的面积范围来识别（10到30像素的面积）
+        # 但因为这是聚类结果，面积可能更大，所以使用更合适的标准
+        if 10 <= area <= 30:
             cv2.rectangle(superpill_mask, (x, y), (x + w, y + h), 255, -1)
     
     # 从障碍物掩码中移除superpill区域

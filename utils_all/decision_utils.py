@@ -42,8 +42,8 @@ def pacman_decision(pacman_info, obstacle_info):
             shrunk_x1, shrunk_y1, shrunk_x2, shrunk_y2 = x1, y1, x2, y2
         
         # 设置容忍度（默认为5像素）
-        tolerance_x = 5
-        tolerance_y = 7
+        tolerance_x = 6
+        tolerance_y = 6
 
         # 检查向上移动
         # 在shrunk bbox的基础上，向上扩展tolerance像素，检查是否与障碍物重合
