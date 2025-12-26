@@ -238,17 +238,39 @@ def detect_gp_with_detector(env_img, args, path):
     return ghost_info, pacman_info
 
 
-def detect_superpill(env_img, iter=0):
+def detect_superpill(env_img, former_superpill_info, iter=0):
     """
-    使用ObjectDetector检测超级药丸的位置
+    使用ObjectDetector检测超级药丸的位置，pipeline如下：
+    
+    iter == 0 时：
+        - 寻找superpills
+        - 在y轴对称位置生成新的superpills（单帧只显示一侧，实际初始有两对）
+        - 记录所有坐标作为初始值
+    
+    iter > 0 时：
+        - 当 (iter//2)%2 == 0：检测左侧superpills
+            * 检查初始位置中的左侧药丸是否在图中检测到
+            * 未检测到的从结果中删除
+            * 如果左侧检测到新的superpill且不在列表中，则添加
+        
+        - 当 (iter//2)%2 == 1：检测右侧superpills
+            * 检查初始位置中的右侧药丸是否在图中检测到
+            * 未检测到的从结果中删除
+            * 如果右侧检测到新的superpill且不在列表中，则添加
     
     :param env_img: 输入图像
-    :param iter: 迭代次数，用于决定检测策略
-    
+    :param former_superpill_info: 前一次detect_superpill函数结果，格式为：
+        {
+            'superpill_boxes': [[x1,y1,x2,y2],...],
+            'superpill_centers': [[x,y],...],
+            'initial_data': {...}  # iter==0时保存的初始数据
+        }
+    :param iter: 当前帧序号（0开始）
     :return: 包含超级药丸边界框和中心点的字典
              格式: {
                  'superpill_boxes': [[x1, y1, x2, y2], ...],
-                 'superpill_centers': [[x, y], ...]
+                 'superpill_centers': [[x, y], ...],
+                 'initial_data': {...}  # 保存初始数据供后续使用
              }
     """
     class MockArgs:
@@ -286,79 +308,264 @@ def detect_superpill(env_img, iter=0):
         detected_centers.append(center)
     
     if iter == 0:
-        if len(detected_boxes) < 2:
-            return {'superpill_boxes': [], 'superpill_centers': []}
+        if len(detected_boxes) == 0:
+            return {
+                'superpill_boxes': [],
+                'superpill_centers': [],
+                'initial_data': None
+            }
         
-        left_indices = sorted(range(len(detected_centers)), 
-                             key=lambda i: detected_centers[i][0])[:2]
-        right_indices = sorted(range(len(detected_centers)), 
-                              key=lambda i: detected_centers[i][0])[-2:]
+        # 检测到的是左侧还是右侧（根据第一个检测到的 superpill 判断）
+        first_center = detected_centers[0]
+        is_detected_left = first_center[0] < img_width // 2
         
-        left_centers = [detected_centers[i] for i in left_indices]
-        right_centers = [detected_centers[i] for i in right_indices]
-        left_boxes = [detected_boxes[i] for i in left_indices]
-        right_boxes = [detected_boxes[i] for i in right_indices]
+        # 根据 y 轴对称生成另一侧的 superpill
+        generated_boxes = []
+        generated_centers = []
         
-        left_centers_sorted = sorted(left_centers, key=lambda c: c[1])
-        right_centers_sorted = sorted(right_centers, key=lambda c: c[1])
-        left_boxes_sorted = [left_boxes[left_centers.index(c)] for c in left_centers_sorted]
-        right_boxes_sorted = [right_boxes[right_centers.index(c)] for c in right_centers_sorted]
+        for box, center in zip(detected_boxes, detected_centers):
+            if is_detected_left:
+                # 检测到左侧，生成右侧
+                new_center_x = img_width - center[0]
+                new_center = [new_center_x, center[1]]
+                new_box_x1 = img_width - box[2]
+                new_box_x2 = img_width - box[0]
+                new_box = [new_box_x1, box[1], new_box_x2, box[3]]
+            else:
+                # 检测到右侧，生成左侧
+                new_center_x = img_width - center[0]
+                new_center = [new_center_x, center[1]]
+                new_box_x1 = img_width - box[2]
+                new_box_x2 = img_width - box[0]
+                new_box = [new_box_x1, box[1], new_box_x2, box[3]]
+            
+            generated_centers.append(new_center)
+            generated_boxes.append(new_box)
         
-        initial_superpill_data = {
-            'boxes': [left_boxes_sorted[0], right_boxes_sorted[0], 
-                      left_boxes_sorted[1], right_boxes_sorted[1]],
-            'centers': [left_centers_sorted[0], right_centers_sorted[0],
-                        left_centers_sorted[1], right_centers_sorted[1]],
+        # 合并检测到的和生成的 superpills
+        if is_detected_left:
+            all_centers = detected_centers + generated_centers
+            all_boxes = detected_boxes + generated_boxes
+        else:
+            all_centers = generated_centers + detected_centers
+            all_boxes = generated_boxes + detected_boxes
+        
+        # 按 y 坐标排序（上下位置）
+        sorted_pairs = sorted(zip(all_centers, all_boxes), key=lambda p: p[0][1])
+        sorted_centers = [p[0] for p in sorted_pairs]
+        sorted_boxes = [p[1] for p in sorted_pairs]
+        
+        initial_data = {
+            'boxes': [sorted_boxes[0], sorted_boxes[2], 
+                      sorted_boxes[1], sorted_boxes[3]],
+            'centers': [sorted_centers[0], sorted_centers[2],
+                        sorted_centers[1], sorted_centers[3]],
             'left_indices': [0, 2],
-            'right_indices': [1, 3],
-            'left_detected': True,
-            'right_detected': True
+            'right_indices': [1, 3]
         }
         
-        detect_superpill.initial_superpill_data = initial_superpill_data
-        
         return {
-            'superpill_boxes': initial_superpill_data['boxes'][:],
-            'superpill_centers': initial_superpill_data['centers'][:]
+            'superpill_boxes': initial_data['boxes'],
+            'superpill_centers': initial_data['centers'],
+            'initial_data': initial_data
         }
     else:
-        initial_superpill_data = getattr(detect_superpill, 'initial_superpill_data', None)
-        if initial_superpill_data is None:
-            return {'superpill_boxes': [], 'superpill_centers': []}
+        """
+        iter > 0 的处理逻辑：
         
-        initial_boxes = initial_superpill_data['boxes']
-        initial_centers = initial_superpill_data['centers']
-        left_detected = initial_superpill_data.get('left_detected', True)
-        right_detected = initial_superpill_data.get('right_detected', True)
+        直接对上一帧的superpill结果进行分析处理，而非使用initial_data：
         
-        has_left = any(c[0] < img_width // 2 for c in detected_centers)
-        has_right = any(c[0] >= img_width // 2 for c in detected_centers)
+        1. 获取上一帧的superpill信息（former_superpill_info）
+           - superpill_boxes: 上一帧检测到的超级药丸边界框列表
+           - superpill_centers: 上一帧检测到的超级药丸中心点列表
         
-        if (iter // 2) % 2 == 0:
-            if not has_left:
-                left_detected = False
+        2. 根据当前帧号判断应该检测哪一侧：
+           - 当 (iter//2)%2 == 0 时，检测左侧超级药丸
+           - 当 (iter//2)%2 == 1 时，检测右侧超级药丸
+           （//2是因为超级药丸每隔2帧变化一次显示位置）
+        
+        3. 对于应该检测的那一侧（以左侧为例）：
+           a) 分离上一帧结果中的左侧和右侧superpill（基于x坐标判断）
+              * left_indices: 上一帧中左侧superpill的索引列表
+              * right_indices: 上一帧中右侧superpill的索引列表
+            
+           b) 以上一帧结果为基础，复制到result_boxes和result_centers
+            
+           c) 步骤1：检查上一帧中该侧的superpill在当前帧中是否被找到
+              * 遍历该侧所有superpill的中心点
+              * 在当前帧检测结果中寻找匹配的药丸（曼哈顿距离<10像素）
+              * 找到：不操作（保留该superpill）
+              * 没找到：记录该索引待删除
+            
+           d) 步骤2：检查是否有新的superpill需要添加
+              * 遍历当前帧检测到的superpill
+              * 检查是否已经存在于结果中（避免重复）
+              * 如果是新的superpill（距离>=10像素），添加到结果中
+        
+        4. 对于不应该检测的另一侧：
+           * 直接保留上一帧的superpill（因为它们应该存在但当前帧不显示）
+           * 不进行任何修改
+        
+        :return: 返回处理后的superpill信息（基于上一帧结果进行增删）
+                 格式: {
+                     'superpill_boxes': [[x1, y1, x2, y2], ...],
+                     'superpill_centers': [[x, y], ...]
+                 }
+        """
+        
+        # 直接使用上一帧的superpill信息，不需要initial_data
+        if former_superpill_info is None:
+            return {
+                'superpill_boxes': [],
+                'superpill_centers': []
+            }
+        
+        # 获取上一帧的superpill结果
+        prev_boxes = former_superpill_info.get('superpill_boxes', [])
+        prev_centers = former_superpill_info.get('superpill_centers', [])
+        
+        # 如果上一帧没有superpill，返回空结果
+        if len(prev_boxes) == 0:
+            return {
+                'superpill_boxes': [],
+                'superpill_centers': []
+            }
+        
+        # 根据迭代次数判断当前帧应该检测哪一侧
+        is_left_side = (iter // 2) % 2 == 0
+        
+        if is_left_side:
+            # ========== 处理左侧超级药丸 ==========
+            
+            # 分离左侧和右侧的superpill（基于x坐标判断）
+            left_indices = []
+            right_indices = []
+            
+            for i, center in enumerate(prev_centers):
+                if center[0] < img_width // 2:
+                    left_indices.append(i)
+                else:
+                    right_indices.append(i)
+            
+            # 复制上一帧结果作为基础
+            result_boxes = prev_boxes.copy()
+            result_centers = prev_centers.copy()
+            
+            # 步骤1：检查上一帧中左侧的superpill是否在当前帧中检测到
+            # 找出需要检查的索引（左侧的索引）
+            indices_to_check = left_indices
+            
+            # 收集需要删除的索引（避免在遍历时修改列表）
+            indices_to_remove = []
+            
+            for idx in indices_to_check:
+                init_center = prev_centers[idx]
+                found = False
+                for det_center in detected_centers:
+                    # 只检查左侧的检测结果
+                    if det_center[0] < img_width // 2:
+                        # 计算曼哈顿距离
+                        dist = abs(det_center[0] - init_center[0]) + abs(det_center[1] - init_center[1])
+                        if dist < 10:
+                            found = True
+                            break
+                # 没找到：记录该索引待删除
+                if not found:
+                    # 找到该索引在result中的实际位置
+                    actual_idx = result_centers.index(init_center)
+                    indices_to_remove.append(actual_idx)
+            
+            # 从高到低删除，避免索引偏移
+            for idx in sorted(indices_to_remove, reverse=True):
+                result_boxes.pop(idx)
+                result_centers.pop(idx)
+            
+            # 步骤2：检查是否有新的superpill需要添加
+            # 遍历当前帧检测到的superpill
+            for j, (box, center) in enumerate(zip(detected_boxes, detected_centers)):
+                if center[0] < img_width // 2:
+                    # 检查是否已经存在于结果中
+                    is_new = True
+                    for existing_center in result_centers:
+                        dist = abs(center[0] - existing_center[0]) + abs(center[1] - existing_center[1])
+                        if dist < 10:
+                            is_new = False
+                            break
+                    # 如果是新的superpill，添加到结果中
+                    if is_new:
+                        result_boxes.append(box)
+                        result_centers.append(center)
+            
+            return {
+                'superpill_boxes': result_boxes,
+                'superpill_centers': result_centers
+            }
         else:
-            if not has_right:
-                right_detected = False
-        
-        initial_superpill_data['left_detected'] = left_detected
-        initial_superpill_data['right_detected'] = right_detected
-        
-        filtered_boxes = []
-        filtered_centers = []
-        
-        for i, center in enumerate(initial_centers):
-            if i in [0, 2] and left_detected:
-                filtered_boxes.append(initial_boxes[i])
-                filtered_centers.append(center)
-            elif i in [1, 3] and right_detected:
-                filtered_boxes.append(initial_boxes[i])
-                filtered_centers.append(center)
-        print(len(filtered_boxes))
-        return {
-            'superpill_boxes': filtered_boxes,
-            'superpill_centers': filtered_centers
-        }
+            # ========== 处理右侧超级药丸 ==========
+            
+            # 分离左侧和右侧的superpill（基于x坐标判断）
+            left_indices = []
+            right_indices = []
+            
+            for i, center in enumerate(prev_centers):
+                if center[0] < img_width // 2:
+                    left_indices.append(i)
+                else:
+                    right_indices.append(i)
+            
+            # 复制上一帧结果作为基础
+            result_boxes = prev_boxes.copy()
+            result_centers = prev_centers.copy()
+            
+            # 步骤1：检查上一帧中右侧的superpill是否在当前帧中检测到
+            indices_to_check = right_indices
+            
+            # 收集需要删除的索引（避免在遍历时修改列表）
+            indices_to_remove = []
+            
+            for idx in indices_to_check:
+                init_center = prev_centers[idx]
+                found = False
+                for det_center in detected_centers:
+                    # 只检查右侧的检测结果
+                    if det_center[0] >= img_width // 2:
+                        # 计算曼哈顿距离
+                        dist = abs(det_center[0] - init_center[0]) + abs(det_center[1] - init_center[1])
+                        if dist < 10:
+                            found = True
+                            break
+                # 没找到：记录该索引待删除
+                if not found:
+                    # 找到该索引在result中的实际位置
+                    actual_idx = result_centers.index(init_center)
+                    indices_to_remove.append(actual_idx)
+            
+            # 从高到低删除，避免索引偏移
+            for idx in sorted(indices_to_remove, reverse=True):
+                result_boxes.pop(idx)
+                result_centers.pop(idx)
+            
+            # 步骤2：检查是否有新的superpill需要添加
+            for j, (box, center) in enumerate(zip(detected_boxes, detected_centers)):
+                if center[0] >= img_width // 2:
+                    # 检查是否已经存在于结果中
+                    is_new = True
+                    for existing_center in result_centers:
+                        dist = abs(center[0] - existing_center[0]) + abs(center[1] - existing_center[1])
+                        if dist < 10:
+                            is_new = False
+                            break
+                    # 如果是新的superpill，添加到结果中
+                    if is_new:
+                        result_boxes.append(box)
+                        result_centers.append(center)
+            
+            return {
+                'superpill_boxes': result_boxes,
+                'superpill_centers': result_centers
+            }
+
+
 
 def detect_doors():
     return {'door_centers':[[128,22],[128,202]]}
@@ -522,11 +729,36 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
             cx, cy = center
             cv2.circle(pill_img, (int(cx), int(cy)), 3, (0, 255, 255), -1)
     
+    # 创建legal_action显示图像
+    action_img = env_img.copy()
+    
+    # 获取pacman中心位置和legal_action信息
+    pacman_centers = all_game_info.get('pacman_centers', [])
+    legal_action = all_game_info.get('pacman_decision', {})
+    
+    if pacman_centers and legal_action:
+        # 获取pacman中心坐标
+        pacman_center = pacman_centers[0]  # 假设只有一个pacman
+        cx, cy = pacman_center
+        
+        # 定义箭头长度
+        arrow_length = 20
+        
+        # 根据legal_action绘制箭头
+        if legal_action.get('up', 0) == 1:
+            cv2.arrowedLine(action_img, (int(cx), int(cy)), (int(cx), int(cy) - arrow_length), (0, 255, 0), 2, tipLength=0.3)
+        if legal_action.get('down', 0) == 1:
+            cv2.arrowedLine(action_img, (int(cx), int(cy)), (int(cx), int(cy) + arrow_length), (0, 255, 0), 2, tipLength=0.3)
+        if legal_action.get('left', 0) == 1:
+            cv2.arrowedLine(action_img, (int(cx), int(cy)), (int(cx) - arrow_length, int(cy)), (0, 255, 0), 2, tipLength=0.3)
+        if legal_action.get('right', 0) == 1:
+            cv2.arrowedLine(action_img, (int(cx), int(cy)), (int(cx) + arrow_length, int(cy)), (0, 255, 0), 2, tipLength=0.3)
+    
     # 显示图像
-    plt.figure(figsize=(15, 5))
+    plt.figure(figsize=(20, 5))
     
     # 显示带有边界框和中心点的图像
-    plt.subplot(1, 3, 1)
+    plt.subplot(1, 4, 1)
     # 转换BGR到RGB以正确显示颜色
     display_img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
     plt.imshow(display_img_rgb)
@@ -534,18 +766,25 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     plt.axis('off')
     
     # 显示pill位置
-    plt.subplot(1, 3, 2)
+    plt.subplot(1, 4, 2)
     pill_img_rgb = cv2.cvtColor(pill_img, cv2.COLOR_BGR2RGB)
     plt.imshow(pill_img_rgb)
     plt.title(f'Frame {frame_idx} - Pill Positions')
     plt.axis('off')
     
     # 显示障碍物掩码
-    plt.subplot(1, 3, 3)
+    plt.subplot(1, 4, 3)
     obstacles_mask = all_game_info.get('obstacles_mask', np.zeros((256, 256)))
     # obstacles_mask = cv2.resize(obstacles_mask, (160, 250))
     plt.imshow(obstacles_mask, cmap='gray')
     plt.title(f'Frame {frame_idx} - Obstacles Mask')
+    plt.axis('off')
+    
+    # 显示legal_action
+    plt.subplot(1, 4, 4)
+    action_img_rgb = cv2.cvtColor(action_img, cv2.COLOR_BGR2RGB)
+    plt.imshow(action_img_rgb)
+    plt.title(f'Frame {frame_idx} - Legal Actions')
     plt.axis('off')
     
     plt.tight_layout()

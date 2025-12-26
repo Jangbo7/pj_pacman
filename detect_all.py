@@ -54,12 +54,15 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         {
             'pacman_boxes': [[x1, y1, x2, y2], ...],      # pacman边界框(左x,右x,上y,下y)
             'pacman_centers': [[x, y], ...],              # pacman中心点列表
-            'ghosts_boxes': [[x1, y1, x2, y2], ...],      # 所有ghosts边界框
-            'ghosts_centers': [[x, y], ...],              # 所有ghosts中心点
+            'ghosts_boxes': [[x1, y1, x2, y2], ...],      # 所有ghosts边界框(算法不使用)
+            'ghosts_centers': [[x, y], ...],              # 所有ghosts中心点(算法不使用)
+            '4ghosts_boxes': [[x1, y1, x2, y2], ...],      # 4ghosts边界框，记录4个鬼的位置。（算法使用）
+            '4ghosts_centers': [[x, y], ...],              # 4ghosts中心点,记录4个鬼的位置。（算法使用）
             'pill_centers': [[x, y], ...],                # pills中心点列表
             'pill_num': [n],                              # pills数量
             'superpill_boxes': [[x1, y1, x2, y2], ...],   # superpills边界框
             'superpill_centers': [[x, y], ...],           # superpills中心点
+            'superpill_info': {...},                      # superpill完整信息(包含initial_data供下帧使用)
             'door_centers': [[x, y], ...],                # doors中心点(上下传送门)
             'obstacles_mask': mask,                       # 障碍物掩码(只有在第一帧会更新）
             'pacman_decision': {directions},              # 当前帧pacman可行动方向(合法action空间)
@@ -109,7 +112,7 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         # 如果YOLO没检测到pacman，则使用detector重新检测
         if len(pacman_info['pacman_boxes']) == 0:
             ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
-            print("YOLO didn't detect pacman, using detector to detect...")
+            # print("YOLO didn't detect pacman, using detector to detect...")
         else:
             ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
 
@@ -126,6 +129,8 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
             if detected_boxes[i] and len(detected_boxes[i]) > 0:
                 ghosts_info['ghosts_boxes'][i] = detected_boxes[i][0]  # 取第一个检测结果
                 ghosts_info['ghosts_centers'][i] = detected_centers[i][0]  # 取第一个检测结果
+
+        superpill_info = detect_superpill(env_img, None, iter)
         
     else:
         # 获取上一帧的ghosts_info和ghost_num
@@ -152,10 +157,10 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         ghost_info, pacman_info = detect_gp_with_yolo(env_img, model)
         
         # 如果YOLO没检测到pacman，则使用detector重新检测
-        print(pacman_info['pacman_boxes'])
-        if len(pacman_info['pacman_boxes']) == 0:
+        # print(pacman_info['pacman_boxes'])
+        if len(pacman_info['pacman_boxes']) != 4:
             ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
-            print("YOLO didn't detect pacman, using detector to detect...")
+            # print("YOLO didn't detect pacman, using detector to detect...")
         else:
             ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
         
@@ -214,9 +219,10 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
 
             # 更新ghost_num
             ghost_num = 4  # 固定设置为4个ghost
+        superpill_info = detect_superpill(env_img, former_all_game_info.get('superpill_info', None), iter)
             
     pill_info = detect_pills_with_detector(env_img, args, path)
-    superpill_info = detect_superpill(env_img)
+    
     door_info = detect_doors()
     decision , legal_action_num = pacman_decision(pacman_info, obstacles_mask)
 
@@ -229,6 +235,10 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         # ghosts信息（注意这里用的是ghosts_info而不是ghost_info）
         'ghosts_boxes': ghosts_info.get('ghosts_boxes', []),
         'ghosts_centers': ghosts_info.get('ghosts_centers', []),
+
+        # 4ghosts 信息
+        '4ghosts_boxes': ghosts_info.get('ghosts_boxes', [])[1:5],
+        '4ghosts_centers': ghosts_info.get('ghosts_centers', [])[1:5],
         
         # pills信息
         'pill_centers': pill_info.get('pill_centers', []),
@@ -237,6 +247,9 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         # superpills信息
         'superpill_boxes': superpill_info.get('superpill_boxes', []),
         'superpill_centers': superpill_info.get('superpill_centers', []),
+        'superpill_info': superpill_info,
+
+
         
         # doors信息
         'door_centers': door_info.get('door_centers', []),
@@ -262,9 +275,10 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         'state': state
     }
     
+    # print(superpill_info['superpill_boxes'])
     
     if args.visualize_save:
-        # if iter > 300:
+        # if iter > 100:
         save_and_visualize_detection_results(env_img, all_game_info,iter,epoch,args)
 
     return all_game_info
