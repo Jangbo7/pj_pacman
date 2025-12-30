@@ -150,6 +150,7 @@ def detect_pills_with_detector(env_img, args, path):
                  'pill_num': [a]  # a为检测到的pill数量
              }
     """
+    pill_color = (228,111,111)
     if (np.sum((env_img[:, :, 2] == 228) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 111)) > 0):
         pill_color = (228,111,111)
     elif (np.sum((env_img[:, :, 2] == 101) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 228)) > 0):
@@ -345,6 +346,7 @@ def detect_obstacles(env_img, args):
     
     mock_args = MockArgs(getattr(args, 'size', 256))
     
+    obstacle_color = (228,111,111)
     if (np.sum((env_img[:, :, 2] == 228) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 111)) > 0):
         obstacle_color = (228,111,111)
     elif (np.sum((env_img[:, :, 2] == 101) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 228)) > 0):
