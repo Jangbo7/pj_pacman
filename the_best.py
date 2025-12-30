@@ -199,6 +199,10 @@ class GameState:
         self.stuck_frames = 0            # 在该位置停留的帧数
         self.stuck_threshold = 30        # 判定为卡住的帧数阈值
         self.stuck_distance = 5          # 判定为同一位置的距离阈值
+        
+        # 卡住时的VLM决策历史（避免重复选择相同方向）
+        self.stuck_vlm_history = {}      # {(x, y): [已尝试的动作列表]}
+        self.stuck_history_distance = 10  # 判定为同一卡住位置的距离阈值
     
     def set_last_action(self, action):
         """
@@ -507,6 +511,53 @@ class GameState:
         """重置卡住检测状态"""
         self.stuck_position = None
         self.stuck_frames = 0
+    
+    def get_stuck_history_key(self, pos):
+        """
+        获取卡住位置对应的历史记录键
+        将位置量化到网格，便于匹配相近位置
+        
+        :param pos: 位置 (x, y)
+        :return: 量化后的位置键 (qx, qy)
+        """
+        if pos is None:
+            return None
+        # 将位置量化到10像素的网格
+        grid_size = self.stuck_history_distance
+        qx = int(pos[0] // grid_size) * grid_size
+        qy = int(pos[1] // grid_size) * grid_size
+        return (qx, qy)
+    
+    def get_stuck_tried_actions(self, pos):
+        """
+        获取在某位置已经尝试过的VLM动作
+        
+        :param pos: 当前位置 (x, y)
+        :return: 已尝试的动作列表
+        """
+        key = self.get_stuck_history_key(pos)
+        if key is None:
+            return []
+        return self.stuck_vlm_history.get(key, [])
+    
+    def add_stuck_tried_action(self, pos, action):
+        """
+        记录在某位置尝试的VLM动作
+        
+        :param pos: 当前位置 (x, y)
+        :param action: 执行的动作编号
+        """
+        key = self.get_stuck_history_key(pos)
+        if key is None:
+            return
+        if key not in self.stuck_vlm_history:
+            self.stuck_vlm_history[key] = []
+        if action not in self.stuck_vlm_history[key]:
+            self.stuck_vlm_history[key].append(action)
+    
+    def clear_stuck_history(self):
+        """清空卡住历史记录（游戏重置时调用）"""
+        self.stuck_vlm_history = {}
 
 
 # ==================== 辅助函数 ====================
@@ -533,11 +584,62 @@ def euclidean_distance(pos1, pos2):
 
 
 # ==================== VLM Prompt 生成函数 ====================
-def generate_stuck_prompt(game_state):
+def generate_low_pill_guide_prompt(game_state):
+    """
+    生成豆子数量较少时的VLM引导Prompt
+    
+    :param game_state: GameState对象
+    :return: prompt字符串
+    """
+    pacman_pos = game_state.get_pacman_pos()
+    ghost_positions = game_state.get_ghost_positions()
+    legal_actions = game_state.get_legal_actions()
+    pill_positions = game_state.get_pill_positions()
+    superpill_positions = game_state.get_superpill_positions()
+    
+    # 构建豆子位置信息
+    pill_info = []
+    if pacman_pos and pill_positions:
+        for pill in pill_positions:
+            dist = manhattan_distance(pacman_pos, pill)
+            pill_info.append((pill, dist))
+        pill_info.sort(key=lambda x: x[1])  # 按距离排序
+    
+    # 取最近的5个豆子
+    nearest_pills = pill_info[:5] if pill_info else []
+
+    prompt = f"""你是Pac-Man游戏AI助手。当前豆子数量很少（只剩{game_state.pill_num}个），需要你帮助找到并吃掉剩余的豆子来通关。
+
+【当前状态】
+- Pacman位置: {pacman_pos}
+- 剩余豆子数: {game_state.pill_num}
+- 可执行动作: {legal_actions}
+- Ghost位置: {ghost_positions}
+- 大力丸位置: {superpill_positions}
+
+【最近的豆子位置和距离】
+{chr(10).join([f"  - 位置{p[0]}, 距离{p[1]:.1f}" for p in nearest_pills]) if nearest_pills else "  无法检测到豆子位置"}
+
+【动作编号】
+0=静止, 1=上, 2=右, 3=左, 4=下
+
+【决策要求】
+1. 优先选择朝向最近豆子的方向
+2. 避开Ghost所在方向
+3. 如果豆子在左右两侧，优先水平移动
+4. 如果豆子在上下方向，优先垂直移动
+
+请只输出一个数字（0-4）表示建议的动作，不要输出其他内容！"""
+
+    return prompt
+
+
+def generate_stuck_prompt(game_state, tried_actions=None):
     """
     生成Pacman卡住时的VLM Prompt
     
     :param game_state: GameState对象
+    :param tried_actions: 在该位置已尝试过的动作列表
     :return: prompt字符串
     """
     pacman_pos = game_state.get_pacman_pos()
@@ -555,13 +657,20 @@ def generate_stuck_prompt(game_state):
             if dist < min_pill_dist:
                 min_pill_dist = dist
                 nearest_pill = pill
+    
+    # 将已尝试的动作转换为方向名
+    action_to_name = {0: '静止', 1: '上', 2: '右', 3: '左', 4: '下'}
+    tried_actions_str = ""
+    if tried_actions and len(tried_actions) > 0:
+        tried_names = [action_to_name.get(a, str(a)) for a in tried_actions]
+        tried_actions_str = f"\n- ⚠️ 在此位置已尝试过的方向: {tried_names}（请不要再选择这些方向！）"
 
     prompt = f"""你是Pac-Man游戏AI助手。Pacman已经卡住了，在同一位置停留了{game_state.stuck_frames}帧,你应该决策一个方向，保证逃离这个区域，防止继续被卡住，朝着豆子最近的方向走。
 
 【当前状态】
 - Pacman位置: {pacman_pos}
 - 可执行动作: {legal_actions}
-- 上一步动作: {game_state.last_direction}（可能导致卡住）
+- 上一步动作: {game_state.last_direction}（可能导致卡住）{tried_actions_str}
 - Ghost位置: {ghost_positions}
 - 最近豆子位置: {nearest_pill}，距离: {min_pill_dist:.1f}
 - 大力丸位置: {superpill_positions}
@@ -573,8 +682,9 @@ def generate_stuck_prompt(game_state):
 【分析要求】
 1. Pacman卡住通常是因为重复往返或撞墙
 2. 请选择一个与上一步不同的方向
-3. 优先选择朝向最近豆子的方向
-4. 避开Ghost所在方向
+3. {"⚠️ 重要：必须避开已尝试过的方向！" if tried_actions else ""}
+4. 优先选择朝向最近豆子的方向
+5. 避开Ghost所在方向
 
 请只输出一个数字（0-4）表示建议的动作，不要输出其他内容！"""
 
@@ -651,16 +761,17 @@ def generate_multi_ghost_danger_prompt(game_state, ghost_distances):
     return prompt
 
 
-def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None, save_dir="vlm_debug"):
+def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None, save_dir="vlm_debug", tried_actions=None):
     """
     使用VLM进行决策
     
     :param game_state: GameState对象
     :param env_img: 当前帧图像 (BGR格式)
-    :param scenario: 场景类型 ('stuck' 或 'multi_ghost')
+    :param scenario: 场景类型 ('stuck', 'multi_ghost', 'low_pill')
     :param args: 配置参数
     :param ghost_distances: Ghost距离列表（仅multi_ghost场景需要）
     :param save_dir: 调试图片保存目录
+    :param tried_actions: 在卡住位置已尝试过的动作列表（仅stuck场景需要）
     :return: 动作编号 (0-4)
     """
     # 创建保存目录
@@ -674,11 +785,16 @@ def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None,
     
     # 根据场景生成不同的Prompt
     if scenario == 'stuck':
-        prompt = generate_stuck_prompt(game_state)
+        prompt = generate_stuck_prompt(game_state, tried_actions)
         print(f"🤖 VLM介入：Pacman卡住，请求AI决策...")
+        if tried_actions:
+            print(f"   已尝试过的动作: {tried_actions}")
     elif scenario == 'multi_ghost':
         prompt = generate_multi_ghost_danger_prompt(game_state, ghost_distances)
         print(f"🤖 VLM介入：{len(ghost_distances)}个Ghost围堵，请求AI决策...")
+    elif scenario == 'low_pill':
+        prompt = generate_low_pill_guide_prompt(game_state)
+        print(f"🤖 VLM介入：豆子数量少({game_state.pill_num}个)，请求AI引导...")
     else:
         return 0
     
@@ -694,6 +810,19 @@ def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None,
     
     # 解析动作
     action = parse_vlm_action(response)
+    
+    # 对于stuck场景，如果VLM返回的动作在已尝试列表中，强制选择其他合法动作
+    if scenario == 'stuck' and tried_actions and action in tried_actions:
+        legal_actions = game_state.get_legal_actions()
+        reverse_map = {'up': 1, 'right': 2, 'left': 3, 'down': 4}
+        # 找一个没尝试过的合法动作
+        for legal in legal_actions:
+            if legal in reverse_map:
+                alt_action = reverse_map[legal]
+                if alt_action not in tried_actions:
+                    print(f"   VLM选择了已尝试过的动作{action}，强制改为: {alt_action} ({legal})")
+                    action = alt_action
+                    break
     
     # 验证动作是否合法
     legal_actions = game_state.get_legal_actions()
@@ -1245,6 +1374,26 @@ def decide_next_action(game_state, args, env_img=None, frame=0):
         if action != 0:
             return action, superpill_pos, 'chase_superpill', False
     
+    # 检查豆子数量是否少于20，如果是则调用VLM引导找豆子
+    # 条件：豆子数量 <= 20，帧数 >= 300，有图像，且有豆子
+    LOW_PILL_THRESHOLD = 20  # 触发VLM引导的豆子数量阈值
+    LOW_PILL_VLM_INTERVAL = 30  # VLM引导的帧间隔（避免过于频繁调用）
+    
+    if (game_state.pill_num <= LOW_PILL_THRESHOLD and 
+        game_state.pill_num > 0 and 
+        env_img is not None and 
+        frame >= 300 and
+        frame % LOW_PILL_VLM_INTERVAL == 0):  # 每30帧调用一次VLM
+        # 豆子数量少，调用VLM引导找豆子
+        action = vlm_decide_action(
+            game_state, env_img,
+            scenario='low_pill',
+            args=args,
+            save_dir="vlm_debug"
+        )
+        if action != 0:
+            return action, None, 'vlm_low_pill', False
+    
     # 非危险状态，使用路径规划寻找豆子
     path_finder = PathFinder(game_state)
     action, target, strategy = path_finder.find_next_action()
@@ -1433,19 +1582,31 @@ if __name__ == "__main__":
             is_stuck, stuck_frames = game_state.check_stuck()
             vlm_stuck_action = None
             
-            if is_stuck and stuck_frames == game_state.stuck_threshold and frame >= 300:
-                # 刚刚达到卡住阈值且帧数>=300，保存检测图片并调用VLM
-                save_stuck_detection_image(
-                    image_bgr, all_game_info, game_state, 
-                    frame, epoch, save_dir="stuck_detection"
-                )
-                # 调用VLM决策
+            if is_stuck and stuck_frames >= game_state.stuck_threshold and frame >= 300:
+                # 达到卡住阈值且帧数>=300，保存检测图片并调用VLM
+                # 获取在该位置已尝试过的动作
+                pacman_pos = game_state.get_pacman_pos()
+                tried_actions = game_state.get_stuck_tried_actions(pacman_pos)
+                
+                # 每次达到阈值时保存图片（只在刚达到阈值时保存，避免重复）
+                if stuck_frames == game_state.stuck_threshold:
+                    save_stuck_detection_image(
+                        image_bgr, all_game_info, game_state, 
+                        frame, epoch, save_dir="stuck_detection"
+                    )
+                
+                # 调用VLM决策，传入已尝试过的动作
                 vlm_stuck_action = vlm_decide_action(
                     game_state, image_bgr,
                     scenario='stuck',
                     args=args,
-                    save_dir="vlm_debug"
+                    save_dir="vlm_debug",
+                    tried_actions=tried_actions
                 )
+                
+                # 记录本次VLM决策的动作
+                if vlm_stuck_action is not None and vlm_stuck_action != 0:
+                    game_state.add_stuck_tried_action(pacman_pos, vlm_stuck_action)
             # ================================
 
             # 打印当前状态（每50帧打印一次，减少输出）
@@ -1519,6 +1680,8 @@ if __name__ == "__main__":
                 frames_since_decision = DECISION_INTERVAL  # 确保下一帧立即决策
                 # 重置卡住检测
                 game_state.reset_stuck_detection()
+                # 清空卡住历史记录（新游戏开始）
+                game_state.clear_stuck_history()
             
             # 移除sleep，让画面尽可能流畅
             # time.sleep(0.05)
