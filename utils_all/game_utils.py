@@ -15,8 +15,10 @@ def create_pacman_environment(render_mode="human"):
         env: Atari Pac-Man环境实
     """
     # 创建Ms. Pac-Man环境，这是Atari游戏中最接近经典Pac-Man的游戏
-    env = gym.make("ALE/Pacman-v5", render_mode=render_mode, mode=0, difficulty=1)
-    # env = gym.make("ALE/Pacman-v0", render_mode=render_mode)
+
+    # 'MsPacman-v4'
+    # env = gym.make("MsPacmanNoFrameskip-v4", render_mode=render_mode)
+    env = gym.make("ALE/MsPacman-v5", render_mode=render_mode)
     return env
 
 

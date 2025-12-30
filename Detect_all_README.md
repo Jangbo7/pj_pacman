@@ -51,3 +51,17 @@ utils_all文件的功能是存储大部分主函数相关的组件，（有需�
         __self.game_name='ALE/Pacman-v5'# 'ALE/MontezumaRevenge-v5'蒙特祖马__
 
         __self.vlm='qwen3-vl-plus'#'qwen-vl-plus'   'Qwen-VL-Max' qwen3比qwen强__
+
+
+### *detect_all新增*
+1字典返回新增
+'4ghosts_boxes': [[x1, y1, x2, y2], ...],      # 4ghosts边界框，记录4个鬼的位置。
+'4ghosts_centers': [[x, y], ...],              # 4ghosts中心点,记录4个鬼的位置。
+<!-- !使用RL或者VLM，利用这个返回值而不是ghosts_boxes和ghosts_centers。 -->
+
+
+ 'state': 'init' or 'run' or 'chase',  # 3种当前pacman游戏状态(分别对应iter=0初始化；pacman要逃跑；pacman要追鬼)
+
+2 可视化新增
+画有legal action箭头的图片
+

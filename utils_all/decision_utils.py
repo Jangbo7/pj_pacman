@@ -10,14 +10,14 @@ def pacman_decision(pacman_info, obstacle_info):
     
     
     :return: 
-        - 'Caught' 如果没有检测到pacman
         - 字典 {up: 1/0, down: 1/0, left: 1/0, right: 1/0} 表示可行动方向
           1表示可以移动，0表示不可移动
+        - int legal_action_num: 可行动方向的数量
     """
-    
+    legal_action_num = 4
     if len(pacman_info['pacman_boxes']) == 0:
         print('Caught')
-        return 'Caught'
+        return {'up': 0, 'down': 0, 'left': 0, 'right': 0}, legal_action_num-4
     else:
         # 获取pacman边界框坐标
         pacman_box = pacman_info['pacman_boxes'][0]  # 只取第一个（也是唯一一个）pacman
@@ -42,8 +42,8 @@ def pacman_decision(pacman_info, obstacle_info):
             shrunk_x1, shrunk_y1, shrunk_x2, shrunk_y2 = x1, y1, x2, y2
         
         # 设置容忍度（默认为5像素）
-        tolerance_x = 5
-        tolerance_y = 7
+        tolerance_x = 6
+        tolerance_y = 6
 
         # 检查向上移动
         # 在shrunk bbox的基础上，向上扩展tolerance像素，检查是否与障碍物重合
@@ -53,6 +53,7 @@ def pacman_decision(pacman_info, obstacle_info):
             up_region = obstacle_info[up_check_y1:up_check_y2, shrunk_x1:shrunk_x2]
             if np.any(up_region > 0):  # 检查是否有障碍物重合
                 directions['up'] = 0
+                legal_action_num -= 1
         
         # 检查向下移动
         # 在shrunk bbox的基础上，向下扩展tolerance像素，检查是否与障碍物重合
@@ -62,6 +63,7 @@ def pacman_decision(pacman_info, obstacle_info):
             down_region = obstacle_info[down_check_y1:down_check_y2, shrunk_x1:shrunk_x2]
             if np.any(down_region > 0):  # 检查是否有障碍物重合
                 directions['down'] = 0
+                legal_action_num -= 1
         
         # 检查向左移动
         # 在shrunk bbox的基础上，向左扩展tolerance像素，检查是否与障碍物重合
@@ -71,6 +73,7 @@ def pacman_decision(pacman_info, obstacle_info):
             left_region = obstacle_info[shrunk_y1:shrunk_y2, left_check_x1:left_check_x2]
             if np.any(left_region > 0):  # 检查是否有障碍物重合
                 directions['left'] = 0
+                legal_action_num -= 1
         
         # 检查向右移动
         # 在shrunk bbox的基础上，向右扩展tolerance像素，检查是否与障碍物重合
@@ -80,8 +83,9 @@ def pacman_decision(pacman_info, obstacle_info):
             right_region = obstacle_info[shrunk_y1:shrunk_y2, right_check_x1:right_check_x2]
             if np.any(right_region > 0):  # 检查是否有障碍物重合
                 directions['right'] = 0
+                legal_action_num -= 1
         
-        return directions
+        return directions, legal_action_num
     
 
 if __name__ == '__main__': 

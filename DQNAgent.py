@@ -27,6 +27,8 @@ class DQNAgent:
         self.gamma = 0.99
         self.lr = 1e-3
 
+        self.reward = 0
+
         self.memory = ReplayBuffer(capacity=10000)
 
         self.q_net = QNetwork(state_size, action_size)
