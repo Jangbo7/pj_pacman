@@ -111,7 +111,7 @@ def create_state(obs, former_all_game_info):
     return state
 
 def right_situation(all_game_info):
-    return not((1000+all_game_info["score"]) >> 13)
+    return not((all_game_info["score"]+all_game_info["score"]>>3) >> 13)
 
 gym.register_envs(ale_py)
 
@@ -474,6 +474,11 @@ class GameState:
 # ==================== 辅助函数 ====================
 def manhattan_distance(pos1, pos2):
     return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
+
+def paint(path, obs, value, use = True):
+    cv2.imwrite(path, cv2.cvtColor(obs, cv2.COLOR_RGB2BGR))
+    for i in range(int(1e5)):
+        obs_ = obs / value
 
 # ==================== VLM Prompt 生成函数 ====================
 def generate_low_pill_guide_prompt(game_state):
@@ -1105,7 +1110,7 @@ def single_action(env, action_num, duration):
         total_reward += reward
         if terminated or truncated:
             break
-    cv2.imwrite(f'MsPacman/cut.png', cv2.cvtColor(obs, cv2.COLOR_RGB2BGR))
+    paint(f'MsPacman/cut.png', obs, duration, use=True)
     return obs, total_reward, terminated, truncated, info
 
 # ==================== 主游戏循环（示例） ====================
@@ -1137,7 +1142,7 @@ if __name__ == "__main__":
     frame = 0
     epoch = 0
     former_all_game_info = None
-    last_HP = 3                   
+    last_HP = 2          
     
     # ========== 决策间隔控制 ==========
     DECISION_INTERVAL = 6          # 决策间隔：每隔多少帧重新调用一次decide_next_action
@@ -1184,25 +1189,16 @@ if __name__ == "__main__":
                 tried_actions = game_state.get_stuck_tried_actions(pacman_pos)
                 
                 if stuck_frames == game_state.stuck_threshold:
-                    save_stuck_detection_image(
-                        image_bgr, all_game_info, game_state, 
-                        frame, epoch, save_dir="stuck_detection"
-                    )
+                    save_stuck_detection_image(image_bgr, all_game_info, game_state, frame, epoch, save_dir="stuck_detection")
                 
-                vlm_stuck_action = vlm_decide_action(
-                    game_state, image_bgr,
-                    scenario='stuck',
-                    args=args,
-                    save_dir="vlm_debug",
-                    tried_actions=tried_actions
-                )
+                vlm_stuck_action = vlm_decide_action(game_state, image_bgr, scenario='stuck', args=args, save_dir="vlm_debug", tried_actions=tried_actions)
                 
                 if vlm_stuck_action is not None and vlm_stuck_action != 0:
                     game_state.add_stuck_tried_action(pacman_pos, vlm_stuck_action)
             # ================================
-
-            if frame % 50 == 0:
-                game_state.print_state()
+            
+            if right_situation(all_game_info):
+                current_action, value = reasoner.choose_action(create_state(observation, all_game_info))
             
             # ========== 决策间隔控制逻辑 ==========
             need_new_decision = (
@@ -1221,7 +1217,8 @@ if __name__ == "__main__":
                 else:
                     action, target, strategy, is_danger = decide_next_action(game_state, args, env_img=image_bgr, frame=frame)
                 
-                current_action = action
+                if not right_situation(all_game_info):
+                    current_action = action
                 current_target = target
                 current_strategy = strategy
                 frames_since_decision = 0  
@@ -1230,12 +1227,9 @@ if __name__ == "__main__":
                     pill_count = game_state.pill_num
                     print(f"[Frame {frame}] 策略: {strategy}, 动作: {action}, 豆子: {pill_count}")
             else:
-                action = current_action
                 frames_since_decision += 1
-            
-            if right_situation(all_game_info):
-                action, value = reasoner.choose_action(create_state(observation, all_game_info))
 
+            action = current_action
             observation, reward, terminated, truncated, info = single_action(env, action, value)
                 
             former_all_game_info = all_game_info
