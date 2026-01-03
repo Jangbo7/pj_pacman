@@ -3,16 +3,13 @@ import ale_py
 import time
 import cv2
 import os
-import tempfile
-from PIL import Image
-import matplotlib.pyplot as plt
-import dashscope
-from dashscope import MultiModalConversation
 import re
 import numpy as np
-import random
 import math
 from ultralytics import YOLO
+from collections import deque
+import dashscope
+from dashscope import MultiModalConversation
 
 # pacman相关导入
 from detect_all import detect_all_in_one, crop_image, find_label, detect_score, detect_HP
@@ -119,10 +116,10 @@ class GameArgs:
         
         # 大力丸追逐策略参数
         self.superpill_chase_threshold = 50  # 大力丸追逐距离阈值：Pacman离大力丸的距离小于此值时考虑追逐
-        self.superpill_safe_margin = 50      # 安全边际：最近Ghost距离需要比大力丸距离多出这个值才会追逐
+        self.superpill_safe_margin = 20      # 安全边际：最近Ghost距离需要比大力丸距离多出这个值才会追逐
         
         # 追击Ghost策略参数（吃掉大力丸后）
-        self.ghost_chase_threshold = 100  # 追击Ghost的距离阈值：Ghost距离小于此值时主动追击
+        self.ghost_chase_threshold = 80  # 追击Ghost的距离阈值：Ghost距离小于此值时主动追击
 
 
 # ==================== 游戏信息存储类 ====================
@@ -761,7 +758,7 @@ def generate_multi_ghost_danger_prompt(game_state, ghost_distances):
     return prompt
 
 
-def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None, save_dir="vlm_debug", tried_actions=None):
+def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None, save_dir="vlm_debug", tried_actions=None, vlm_image_path=None):
     """
     使用VLM进行决策
     
@@ -772,16 +769,21 @@ def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None,
     :param ghost_distances: Ghost距离列表（仅multi_ghost场景需要）
     :param save_dir: 调试图片保存目录
     :param tried_actions: 在卡住位置已尝试过的动作列表（仅stuck场景需要）
+    :param vlm_image_path: detect_all_in_one生成的4vlm标注图片路径（如果提供则使用此图片）
     :return: 动作编号 (0-4)
     """
-    # 创建保存目录
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
-    
-    # 保存当前帧图片
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    image_path = os.path.join(save_dir, f"vlm_{scenario}_frame{game_state.frame}_{timestamp}.png")
-    cv2.imwrite(image_path, env_img)
+    # 确定使用的图片路径
+    if vlm_image_path and os.path.exists(vlm_image_path):
+        # 使用detect_all_in_one生成的4vlm标注图片
+        image_path = vlm_image_path
+        print(f"   使用4VLM标注图片: {image_path}")
+    else:
+        # 创建保存目录并保存原始图片
+        if not os.path.exists(save_dir):
+            os.makedirs(save_dir)
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        image_path = os.path.join(save_dir, f"vlm_{scenario}_frame{game_state.frame}_{timestamp}.png")
+        cv2.imwrite(image_path, env_img)
     
     # 根据场景生成不同的Prompt
     if scenario == 'stuck':
@@ -839,6 +841,21 @@ def vlm_decide_action(game_state, env_img, scenario, args, ghost_distances=None,
     
     print(f"   最终决策: {action}")
     return action
+
+
+def get_4vlm_image_path(args, epoch, frame):
+    """
+    获取detect_all_in_one生成的4vlm标注图片路径
+    
+    :param args: 配置参数（包含your_mission_name）
+    :param epoch: 当前轮次
+    :param frame: 当前帧数
+    :return: 图片路径
+    """
+    file_name = args.your_mission_name + "_4vlm"
+    frame_str = str(frame).zfill(6)
+    image_path = os.path.join("detection_results", file_name, f"{epoch}_4vlm_frame_{frame_str}.png")
+    return image_path
 
 
 def save_stuck_detection_image(env_img, all_game_info, game_state, frame, epoch, save_dir="stuck_detection"):
@@ -961,7 +978,8 @@ class PathFinder:
     ]
     
     # 豆子数量阈值
-    PILL_THRESHOLD = 100
+    PILL_THRESHOLD = 150
+    GLOBAL_SEARCH_PILL_THRESHOLD = 20  # 当豆子数量小于此值时，扩大搜索半径至全局
     
     def __init__(self, game_state, search_radius=5):
         """
@@ -1010,22 +1028,23 @@ class PathFinder:
         :param target_positions: 目标位置列表 [(x, y), ...]
         :return: (动作编号, 目标位置, 策略名)
         """
-        from collections import deque
-        
         obstacles_mask = self.game_state.obstacles_mask
         if obstacles_mask is None:
-            # 如果没有障碍物掩码，退化为曼哈顿距离
             return self._heuristic_find_path(start_pos, target_positions)
         
         height, width = obstacles_mask.shape[:2]
         
-        # 将目标位置转换为集合，便于快速查找
+        # 获取当前豆子数量，决定搜索策略
+        pill_count = len(self.game_state.get_pill_positions())
+        use_global_search = pill_count < self.GLOBAL_SEARCH_PILL_THRESHOLD
+        
+        # 将目标位置转换为集合（使用固定的小半径作为到达判定）
         target_set = set()
+        hit_radius = self.search_radius  # 判定到达目标的半径
         for pos in target_positions:
-            # 考虑搜索半径，将目标点周围的区域都标记为目标
             x, y = int(pos[0]), int(pos[1])
-            for dx in range(-self.search_radius, self.search_radius + 1):
-                for dy in range(-self.search_radius, self.search_radius + 1):
+            for dx in range(-hit_radius, hit_radius + 1):
+                for dy in range(-hit_radius, hit_radius + 1):
                     nx, ny = x + dx, y + dy
                     if 0 <= nx < width and 0 <= ny < height:
                         target_set.add((nx, ny))
@@ -1035,9 +1054,8 @@ class PathFinder:
         
         # 检查起点是否已经在目标区域
         if start in target_set:
-            # 已经在目标位置，寻找下一个最近的目标
             nearest = self._find_nearest_target(start_pos, target_positions)
-            if nearest and manhattan_distance(start_pos, nearest) > self.search_radius:
+            if nearest and manhattan_distance(start_pos, nearest) > hit_radius:
                 target_positions = [t for t in target_positions if t != nearest]
                 if target_positions:
                     return self._bfs_find_path(start_pos, target_positions)
@@ -1050,15 +1068,11 @@ class PathFinder:
         
         # 获取需要排除的回头方向
         opposite_direction = self.game_state.get_opposite_direction()
-        
-        # 获取排除回头路后的合法动作
         legal_actions_no_backtrack = self.game_state.get_legal_actions_no_backtrack()
         
-        # 初始化：将起点的有效方向加入队列（排除回头路）
+        # 初始化：将起点的有效方向加入队列
         for dx, dy, direction, action in self.DIRECTIONS:
-            # 如果这个方向是回头路且有其他选择，则跳过
             if direction == opposite_direction and len(legal_actions_no_backtrack) > 0:
-                # 只有当还有其他合法方向时，才排除回头路
                 if direction not in legal_actions_no_backtrack:
                     continue
             
@@ -1067,6 +1081,11 @@ class PathFinder:
                 queue.append(((nx, ny), direction, action, 1))
                 visited.add((nx, ny))
         
+        # 设置搜索深度限制
+        # 豆子数量少时，不限制搜索深度（全局搜索）
+        # 豆子数量多时，限制搜索深度以提高效率
+        max_search_depth = float('inf') if use_global_search else 200
+        
         # BFS搜索
         while queue:
             (cx, cy), first_direction, first_action, dist = queue.popleft()
@@ -1074,11 +1093,11 @@ class PathFinder:
             # 检查是否到达目标
             if (cx, cy) in target_set:
                 target_pos = self._find_nearest_target((cx, cy), target_positions)
-                return first_action, target_pos, 'bfs'
+                return first_action, target_pos, 'bfs_global' if use_global_search else 'bfs'
             
-            # 限制搜索深度，避免搜索过久
-            # if dist > 100:
-            #     continue
+            # 检查搜索深度限制
+            if dist >= max_search_depth:
+                continue
             
             # 扩展邻居节点
             for dx, dy, _, _ in self.DIRECTIONS:
@@ -1088,7 +1107,6 @@ class PathFinder:
                     queue.append(((nx, ny), first_direction, first_action, dist + 1))
         
         # BFS找不到路径，退化为启发式
-        # print("BFS未找到路径，使用启发式算法")  # 关闭输出以提高流畅度
         return self._heuristic_find_path(start_pos, target_positions)
     
     def _heuristic_find_path(self, start_pos, target_positions):
@@ -1300,20 +1318,24 @@ class PathFinder:
         :param pill_count: 豆子数量
         :return: 策略名称
         """
-        if pill_count <= self.PILL_THRESHOLD:
-            return "BFS精确搜索"
+        if pill_count < self.GLOBAL_SEARCH_PILL_THRESHOLD:
+            return "BFS全局搜索（无深度限制）"
+        elif pill_count <= self.PILL_THRESHOLD:
+            return "BFS精确搜索（深度限制200）"
         else:
             return "启发式搜索（曼哈顿距离+障碍物感知）"
 
 
 # ==================== 动作决策函数 ====================
-def decide_next_action(game_state, args, env_img=None, frame=0):
+def decide_next_action(game_state, args, env_img=None, frame=0, epoch=0):
     """
     决定下一步动作的主函数
     
     :param game_state: GameState对象
     :param args: 配置参数
     :param env_img: 当前帧图像（用于VLM调用，可选）
+    :param frame: 当前帧数
+    :param epoch: 当前轮次
     :return: (动作编号, 目标位置, 策略, 是否危险)
     """
     # 首先检查是否处于chase状态（吃掉大力丸后可以追击Ghost）
@@ -1331,22 +1353,16 @@ def decide_next_action(game_state, args, env_img=None, frame=0):
         if action != 0:
             return action, ghost_pos, 'chase_ghost', False
     
-    # 检查是否面临多Ghost威胁（需要VLM介入）
+    # 检查是否面临多Ghost威胁（废弃VLM，改用自己的逃跑逻辑）
     is_multi_danger, nearby_count, ghost_distances = game_state.is_multi_ghost_danger(
         threshold=args.ghost_danger_threshold,
         min_ghost_count=2
     )
     
-    if is_multi_danger and game_state.state != 'chase' and env_img is not None and frame >= 300:
-        # 多Ghost围堵且帧数>=300，调用VLM决策
-        action = vlm_decide_action(
-            game_state, env_img, 
-            scenario='multi_ghost', 
-            args=args,
-            ghost_distances=ghost_distances,
-            save_dir="vlm_debug"
-        )
-        return action, None, 'vlm_multi_ghost', True
+    if is_multi_danger and game_state.state != 'chase':
+        # 多Ghost围堵，使用逃跑逻辑（选择远离所有Ghost的方向）
+        escape_action = _get_escape_action_multi_ghost(game_state, ghost_distances)
+        return escape_action, None, 'escape_multi_ghost', True
     
     # 检查是否处于危险状态（非chase状态下Ghost太近，但只有一个Ghost）
     is_danger, ghost_dist, nearest_ghost = game_state.is_in_danger(args.ghost_danger_threshold)
@@ -1384,12 +1400,16 @@ def decide_next_action(game_state, args, env_img=None, frame=0):
         env_img is not None and 
         frame >= 300 and
         frame % LOW_PILL_VLM_INTERVAL == 0):  # 每30帧调用一次VLM
+        # 获取4vlm标注图片路径
+        vlm_image_path = get_4vlm_image_path(args, epoch, frame)
+        
         # 豆子数量少，调用VLM引导找豆子
         action = vlm_decide_action(
             game_state, env_img,
             scenario='low_pill',
             args=args,
-            save_dir="vlm_debug"
+            save_dir="vlm_debug",
+            vlm_image_path=vlm_image_path
         )
         if action != 0:
             return action, None, 'vlm_low_pill', False
@@ -1447,6 +1467,64 @@ def _get_escape_action(game_state, ghost_pos):
     return best_action if best_action != 0 else 0
 
 
+def _get_escape_action_multi_ghost(game_state, ghost_distances):
+    """
+    获取逃跑动作（远离多个Ghost的方向）
+    
+    策略：选择移动后与所有Ghost距离之和最大的方向
+    
+    :param game_state: GameState对象
+    :param ghost_distances: Ghost距离列表 [(pos, dist), ...]
+    :return: 动作编号
+    """
+    pacman_pos = game_state.get_pacman_pos()
+    legal_actions = game_state.get_legal_actions()
+    
+    if pacman_pos is None or not ghost_distances or not legal_actions:
+        return 0
+    
+    px, py = pacman_pos
+    
+    action_map = {'up': 1, 'right': 2, 'left': 3, 'down': 4}
+    direction_delta = {
+        'up': (0, -1),
+        'down': (0, 1),
+        'left': (-1, 0),
+        'right': (1, 0)
+    }
+    
+    best_action = 0
+    max_total_distance = -1
+    
+    for direction in legal_actions:
+        if direction not in action_map:
+            continue
+        
+        dx, dy = direction_delta[direction]
+        # 计算移动后的新位置
+        new_px, new_py = px + dx * 5, py + dy * 5
+        
+        # 计算新位置与所有Ghost的距离之和
+        total_distance = 0
+        min_ghost_dist = float('inf')  # 同时跟踪最近Ghost的距离
+        
+        for ghost_pos, _ in ghost_distances:
+            gx, gy = ghost_pos
+            dist = abs(new_px - gx) + abs(new_py - gy)
+            total_distance += dist
+            min_ghost_dist = min(min_ghost_dist, dist)
+        
+        # 综合评分：总距离 + 最近Ghost距离的权重
+        # 这样可以避免选择虽然总距离大但离某个Ghost很近的方向
+        score = total_distance + min_ghost_dist * 2
+        
+        if score > max_total_distance:
+            max_total_distance = score
+            best_action = action_map[direction]
+    
+    return best_action if best_action != 0 else 0
+
+
 def single_action(env, action_num, duration):
     """
     执行单个动作持续一定帧数
@@ -1479,8 +1557,8 @@ def initialize_game():
     # 创建游戏环境
     env = gym.make(args.game_name, render_mode='human')
     
-    # 加载YOLO模型
-    model = YOLO(args.path)
+    # 加载YOLO模型（关闭verbose输出）
+    model = YOLO(args.path, verbose=False)
     
     # 创建游戏状态对象
     game_state = GameState()
@@ -1491,7 +1569,7 @@ def initialize_game():
     return env, args, model, game_state
 
 
-def update_game_state(env_img, args, epoch, frame, former_all_game_info, model, game_state):
+def update_game_state(env_img, args, epoch, frame, former_all_game_info, model, game_state, if_4vlm=False):
     """
     更新游戏状态
     
@@ -1502,6 +1580,7 @@ def update_game_state(env_img, args, epoch, frame, former_all_game_info, model, 
     :param former_all_game_info: 上一帧的游戏信息
     :param model: YOLO模型
     :param game_state: 游戏状态对象
+    :param if_4vlm: 是否生成VLM专用的标注图片
     :return: 更新后的all_game_info字典
     """
     # 调用detect_all_in_one获取所有游戏信息
@@ -1511,7 +1590,8 @@ def update_game_state(env_img, args, epoch, frame, former_all_game_info, model, 
         epoch,
         frame,
         former_all_game_info,
-        model=model
+        model=model,
+        if_4vlm=if_4vlm
     )
     
     # 更新GameState对象
@@ -1535,7 +1615,7 @@ if __name__ == "__main__":
     last_HP = 3                        # 上一帧的HP值，用于检测掉命（初始为3条命）
     
     # ========== 决策间隔控制 ==========
-    DECISION_INTERVAL = 6          # 决策间隔：每隔多少帧重新调用一次decide_next_action
+    DECISION_INTERVAL = 4          # 决策间隔：每隔多少帧重新调用一次decide_next_action
     current_action = 0             # 当前执行的动作
     current_target = None           # 当前目标
     current_strategy = 'none'       # 当前策略
@@ -1545,8 +1625,9 @@ if __name__ == "__main__":
     print("开始游戏循环测试...")
     print("=" * 60)
     print("策略说明:")
-    print(f"  - 豆子数量 <= {PathFinder.PILL_THRESHOLD}: 使用BFS精确搜索")
-    print(f"  - 豆子数量 > {PathFinder.PILL_THRESHOLD}: 使用启发式搜索")
+    print(f"  - 豆子数量 < {PathFinder.GLOBAL_SEARCH_PILL_THRESHOLD}: BFS全局搜索（无深度限制，搜索整个地图）")
+    print(f"  - 豆子数量 <= {PathFinder.PILL_THRESHOLD}: BFS精确搜索（深度限制200）")
+    print(f"  - 豆子数量 > {PathFinder.PILL_THRESHOLD}: 启发式搜索")
     print(f"  - Ghost距离 < {args.ghost_danger_threshold}: 触发危险模式/逃跑")
     print(f"  - 决策间隔: 每 {DECISION_INTERVAL} 帧重新决策一次")
     print("=" * 60)
@@ -1555,16 +1636,39 @@ if __name__ == "__main__":
         # 先执行一个空动作让游戏开始
         observation, _, terminated, truncated, _ = single_action(env, 0, 10)
         
+        # VLM触发阈值常量
+        LOW_PILL_THRESHOLD = 20  # 触发VLM引导的豆子数量阈值
+        LOW_PILL_VLM_INTERVAL = 30  # VLM引导的帧间隔
+        
         # 游戏主循环
         while True:
             # 转换图像格式
             image_bgr = cv2.cvtColor(observation, cv2.COLOR_RGB2BGR)
             
-            # 更新游戏状态
+            # 判断是否需要生成VLM标注图片
+            # 条件1: 卡住检测可能触发VLM（基于上一帧的stuck状态）
+            # 条件2: 豆子数量少于阈值且满足VLM调用间隔
+            need_vlm_image = False
+            if frame >= 300:
+                # 检查是否可能卡住（使用上一帧的stuck状态判断）
+                if game_state.stuck_frames >= game_state.stuck_threshold - 1:
+                    need_vlm_image = True
+                # 检查是否豆子数量少
+                if (game_state.pill_num <= LOW_PILL_THRESHOLD and 
+                    game_state.pill_num > 0 and
+                    frame % LOW_PILL_VLM_INTERVAL == 0):
+                    need_vlm_image = True
+            
+            # 更新游戏状态（根据需要生成VLM图片）
             all_game_info = update_game_state(
                 image_bgr, args, epoch, frame,
-                former_all_game_info, model, game_state
+                former_all_game_info, model, game_state,
+                if_4vlm=need_vlm_image
             )
+            
+            # 输出剩余豆子数量（每50帧输出一次，减少刷屏）
+            if frame % 50 == 0:
+                print(f"[Frame {frame}] 剩余豆子: {game_state.pill_num}")
 
             # ========== 掉命检测：HP减少时重置frame ==========
             current_HP = game_state.HP
@@ -1595,23 +1699,23 @@ if __name__ == "__main__":
                         frame, epoch, save_dir="stuck_detection"
                     )
                 
-                # 调用VLM决策，传入已尝试过的动作
+                # 获取4vlm标注图片路径
+                vlm_image_path = get_4vlm_image_path(args, epoch, frame)
+                
+                # 调用VLM决策，传入已尝试过的动作和4vlm图片路径
                 vlm_stuck_action = vlm_decide_action(
                     game_state, image_bgr,
                     scenario='stuck',
                     args=args,
                     save_dir="vlm_debug",
-                    tried_actions=tried_actions
+                    tried_actions=tried_actions,
+                    vlm_image_path=vlm_image_path
                 )
                 
                 # 记录本次VLM决策的动作
                 if vlm_stuck_action is not None and vlm_stuck_action != 0:
                     game_state.add_stuck_tried_action(pacman_pos, vlm_stuck_action)
             # ================================
-
-            # 打印当前状态（每50帧打印一次，减少输出）
-            if frame % 50 == 0:
-                game_state.print_state()
             
             # ========== 决策间隔控制逻辑 ==========
             # 检查是否需要重新决策
@@ -1631,8 +1735,8 @@ if __name__ == "__main__":
                     # 重置卡住检测，给VLM决策一些执行时间
                     game_state.reset_stuck_detection()
                 else:
-                    # 正常决策（传入图像和帧数以支持VLM调用）
-                    action, target, strategy, is_danger = decide_next_action(game_state, args, env_img=image_bgr, frame=frame)
+                    # 正常决策（传入图像、帧数和轮次以支持VLM调用）
+                    action, target, strategy, is_danger = decide_next_action(game_state, args, env_img=image_bgr, frame=frame, epoch=epoch)
                 
                 current_action = action
                 current_target = target
