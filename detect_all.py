@@ -30,7 +30,7 @@ def find_closest_point(target_point, point_list):
     
     return closest_index
 
-def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=None):
+def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=None, if_4vlm=False):
     """
     在一帧游戏中检测所有游戏元素,包括pacman、ghosts、pills、superpills、doors以及障碍物信息
     
@@ -112,7 +112,7 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         # 如果YOLO没检测到pacman，则使用detector重新检测
         if len(pacman_info['pacman_boxes']) == 0:
             ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
-            # print("YOLO didn't detect pacman, using detector to detect...")
+           
         else:
             ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
 
@@ -158,9 +158,9 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
         
         # 如果YOLO没检测到pacman，则使用detector重新检测
         # print(pacman_info['pacman_boxes'])
-        if len(pacman_info['pacman_boxes']) != 4:
+        if len(pacman_info['pacman_boxes']) != 5:
             ghost_info, pacman_info = detect_gp_with_detector(env_img, args, path)
-            # print("YOLO didn't detect pacman, using detector to detect...")
+           
         else:
             ghost_info, _ = detect_gp_with_detector(env_img, args, path)  
         
@@ -279,7 +279,12 @@ def detect_all_in_one(env_img, args, epoch, iter, former_all_game_info, model=No
     
     if args.visualize_save:
         # if iter > 100:
-        save_and_visualize_detection_results(env_img, all_game_info,iter,epoch,args)
+       
+        save_and_visualize_detection_results(env_img, all_game_info, iter, epoch, args)
+
+    if if_4vlm:
+            
+        save_and_visualize_detection_results_4vlm(env_img, all_game_info, iter, epoch, args)
 
     return all_game_info
 

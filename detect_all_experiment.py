@@ -71,7 +71,8 @@ def test_detect_all_in_one():
             epoch, 
             frame_idx,
             former_all_game_info,
-            model=model
+            model=model,
+            if_4vlm=True
         )
         
     

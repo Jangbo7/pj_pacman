@@ -135,7 +135,6 @@ def detect_ghost_num(ghost_info, ghosts_info, ghost_num, args):
     
     return ghost_num
 
-
 def detect_pills_with_detector(env_img, args, path):
     """
     使用PillDetector检测pill位置
@@ -150,20 +149,21 @@ def detect_pills_with_detector(env_img, args, path):
                  'pill_num': [a]  # a为检测到的pill数量
              }
     """
-    # pill_color = (223, 192, 111)
     pill_color = (228,111,111)
-    # 不用管此处的iter和epoch
+    if (np.sum((env_img[:, :, 2] == 228) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 111)) > 0):
+        pill_color = (228,111,111)
+    elif (np.sum((env_img[:, :, 2] == 101) & (env_img[:, :, 1] == 111) & (env_img[:, :, 0] == 228)) > 0):
+        pill_color = (101,111,228)
     pill_detector = PillDetector(env_img, args, iter_num=0, epoch=0)
-    pill_positions, pill_count = pill_detector.detect_pills(target_colors=pill_color, min_area=3, 
-                                                            max_area=16, min_count=8)
+    pill_positions, pill_count = pill_detector.detect_pills(target_colors=pill_color, min_area=3, max_area=16, min_count=8)
     
-    # 构造返回字典
     result_dict = {
         'pill_centers': list(pill_positions),  # pill_positions本身就是一个(x, y)坐标列表
         'pill_num': [pill_count]  # 将pill数量包装在列表中
     }
     
     return result_dict
+
 
 def detect_gp_with_detector(env_img, args, path):
     """
@@ -354,7 +354,7 @@ def detect_superpill(env_img, former_superpill_info, iter=0):
         sorted_pairs = sorted(zip(all_centers, all_boxes), key=lambda p: p[0][1])
         sorted_centers = [p[0] for p in sorted_pairs]
         sorted_boxes = [p[1] for p in sorted_pairs]
-        
+        print(sorted_boxes)
         initial_data = {
             'boxes': [sorted_boxes[0], sorted_boxes[2], 
                       sorted_boxes[1], sorted_boxes[3]],
@@ -663,10 +663,11 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     ghost_boxes = all_game_info.get('ghosts_boxes', [])
     for i, bbox in enumerate(ghost_boxes):
         if i == 0:  # ghost0是一个包含4个边界框的列表
-            for sub_bbox in bbox:
-                if len(sub_bbox) == 4:  # 确保边界框格式正确
-                    x1, y1, x2, y2 = sub_bbox
-                    cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 1)
+            # for sub_bbox in bbox:
+            #     if len(sub_bbox) == 4:  # 确保边界框格式正确
+            #         x1, y1, x2, y2 = sub_bbox
+            #         cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 1)
+            pass
         else:
             if len(bbox) == 4:  # 确保边界框格式正确
                 x1, y1, x2, y2 = bbox
@@ -798,6 +799,94 @@ def visualize_detection_results(env_img, all_game_info, frame_idx, epoch=0, file
     frame_str = str(frame_idx).zfill(6)  # 支持最多999999帧
     plt.savefig(os.path.join(save_dir, f"{epoch}_detection_frame_{frame_str}.png"))
     plt.close()
+
+
+def save_and_visualize_detection_results_4vlm(env_img, all_game_info, frame_idx, epoch=0, args=None):
+    """
+    VLM专用的可视化检测结果函数
+    
+    :param env_img: 原始环境图像
+    :param all_game_info: detect_all_in_one函数返回的所有游戏信息
+    :param frame_idx: 帧索引
+    :param epoch: 训练轮次
+    :param args: 配置参数对象，包含your_mission_name属性
+    """
+    if args is None:
+        file_name = "default"
+    else:
+        file_name = args.your_mission_name + "_4vlm"
+    
+    # 创建显示图像
+    display_img = env_img.copy()
+    
+    # 可视化4ghosts_boxes（用红色框和中心点）
+    ghosts_boxes_4 = all_game_info.get('4ghosts_boxes', [])
+    ghosts_centers_4 = all_game_info.get('4ghosts_centers', [])
+    
+    # 绘制4个ghost的边界框和中心点
+    for i, (bbox, center) in enumerate(zip(ghosts_boxes_4, ghosts_centers_4)):
+        if len(bbox) == 4:  # 确保边界框格式正确
+            x1, y1, x2, y2 = bbox
+            cv2.rectangle(display_img, (int(x1), int(y1)), (int(x2), int(y2)), (0, 0, 255), 2)  # 红色框
+        if len(center) == 2:  # 确保中心点格式正确
+            cx, cy = center
+            cv2.circle(display_img, (int(cx), int(cy)), 4, (0, 0, 255), -1)  # 红色实心圆
+    
+    # 可视化legal_action（用绿色箭头从pacman位置指向可行动方向）
+    pacman_centers = all_game_info.get('pacman_centers', [])
+    legal_action = all_game_info.get('pacman_decision', {})
+    
+    if pacman_centers and legal_action:
+        # 获取pacman中心坐标
+        pacman_center = pacman_centers[0]  # 假设只有一个pacman
+        cx, cy = pacman_center
+        
+        # 定义箭头长度
+        arrow_length = 25
+        
+        # 根据legal_action绘制箭头
+        if legal_action.get('up', 0) == 1:
+            cv2.arrowedLine(display_img, (int(cx), int(cy)), (int(cx), int(cy) - arrow_length), (0, 255, 0), 3, tipLength=0.3)
+        if legal_action.get('down', 0) == 1:
+            cv2.arrowedLine(display_img, (int(cx), int(cy)), (int(cx), int(cy) + arrow_length), (0, 255, 0), 3, tipLength=0.3)
+        if legal_action.get('left', 0) == 1:
+            cv2.arrowedLine(display_img, (int(cx), int(cy)), (int(cx) - arrow_length, int(cy)), (0, 255, 0), 3, tipLength=0.3)
+        if legal_action.get('right', 0) == 1:
+            cv2.arrowedLine(display_img, (int(cx), int(cy)), (int(cx) + arrow_length, int(cy)), (0, 255, 0), 3, tipLength=0.3)
+    
+    # 添加文字标注
+    # 在图像左上角添加信息文字
+    font = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.3
+    color = (255, 255, 255)  # 白色文字
+    thickness = 1
+    
+    # 显示帧信息和ghost数量
+    info_text = f"Frame: {frame_idx}, Epoch: {epoch}, Ghosts: {len(ghosts_boxes_4)}"
+    cv2.putText(display_img, info_text, (10, 30), font, font_scale, color, thickness, cv2.LINE_AA)
+    
+    # 显示legal action信息
+    if legal_action:
+        actions = []
+        for direction in ['up', 'down', 'left', 'right']:
+            if legal_action.get(direction, 0) == 1:
+                actions.append(direction)
+        action_text = f"Actions: {', '.join(actions) if actions else 'None'}"
+        cv2.putText(display_img, action_text, (10, 50), font, font_scale, color, thickness, cv2.LINE_AA)
+    
+    # 保存结果图像
+    save_dir = os.path.join("detection_results", file_name)
+    if not os.path.exists(save_dir):
+        os.makedirs(save_dir)
+    
+    # 使用zfill方法确保帧编号始终有适当位数，支持超过999帧的情况
+    frame_str = str(frame_idx).zfill(6)  # 支持最多999999帧
+    image_path = os.path.join(save_dir, f"{epoch}_4vlm_frame_{frame_str}.png")
+    
+    # 保存图像
+    cv2.imwrite(image_path, display_img)
+    
+    print(f"4VLM可视化保存完成: {image_path}")
 
 
 def save_ghosts_info(all_game_info, frame_idx, epoch=0, file_name="default"):
